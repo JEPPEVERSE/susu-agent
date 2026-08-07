@@ -6,6 +6,7 @@ class ChoiceAction(Enum):
     ASK = "ask"
     NEW_CHAT = "new_chat"
     EXIT = "exit"
+    HISTORY = "history"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,8 @@ class Choice:
             return cls(action=ChoiceAction.NEW_CHAT)
         if command == "/exit":
             return cls(action=ChoiceAction.EXIT)
+        if command == "/history":
+            return cls(action=ChoiceAction.HISTORY)
 
         return cls(action=ChoiceAction.ASK, text=value)
 

@@ -1,23 +1,26 @@
 import asyncio
 
-from agents import Runner, SQLiteSession
+from agents import Runner
 from dotenv import load_dotenv
 from openai.types.responses import ResponseTextDeltaEvent
 
 from logging_config import configure_logging
 from susu_agent.choice import Choice, ChoiceAction
 from susu_agent.math_tutor import math_tutor_agent
+from susu_agent.session import SessionInfo, SessionManager
 
 load_dotenv()
 
-SESSION_PREFIX = "problem"
 logger = configure_logging()
 
 
-def create_session(session_number: int) -> SQLiteSession:
-    session_id = f"{SESSION_PREFIX}_{session_number}"
-    logger.info("Creating session %s", session_id)
-    return SQLiteSession(session_id)
+def print_session_info(session_info: SessionInfo) -> None:
+    """在命令行中展示一条历史会话记录。"""
+    print(
+        f"Session ID: {session_info.session_id}, "
+        f"Created At: {session_info.created_at}, "
+        f"Updated At: {session_info.updated_at}"
+    )
 
 
 def read_choice() -> Choice:
@@ -36,13 +39,13 @@ def read_choice() -> Choice:
             print(error)
 
 
-async def stream_answer(question: str, session: SQLiteSession) -> None:
+async def stream_answer(question: str, session_manager: SessionManager) -> None:
     try:
         logger.info("Starting an agent response")
         result = Runner.run_streamed(
             math_tutor_agent,
             input=question,
-            session=session,
+            session=session_manager.current_session,
         )
 
         async for event in result.stream_events():
@@ -67,13 +70,14 @@ async def stream_answer(question: str, session: SQLiteSession) -> None:
 
 async def main() -> None:
     logger.info("Starting Math Tutor Agent")
-    print("Welcome to the Math Tutor Agent!")
-    print("Enter a math question to talk with the tutor.")
-    print("Enter /new to start a new chat.")
-    print("Enter /exit to exit.")
+    print("欢迎使用速速提分 Agent!")
+    print("请输入一个数学问题.")
+    print("1. 输入 /new 来开启新对话.")
+    print("2. 输入 /history 来查看历史对话.")
+    print("3. 输入 /exit 来退出程序.")
 
-    session_number = 0
-    session = create_session(session_number)
+    session_manager = SessionManager()
+    session_manager.start_new_session()
 
     try:
         while True:
@@ -85,22 +89,39 @@ async def main() -> None:
 
             if choice.action is ChoiceAction.NEW_CHAT:
                 logger.info("Starting a new chat session")
-                session.close()
-                session_number += 1
-                session = create_session(session_number)
-                print(f"Started a new chat: {SESSION_PREFIX}_{session_number}")
+                session_manager.start_new_session()
+                print(f"Started a new chat: {session_manager.current_session_id}")
                 continue
 
-            await stream_answer(choice.question, session)
-    finally:
-        session.close()
-        logger.info("Closed active session")
+            if choice.action is ChoiceAction.HISTORY:
+                logger.info("User requested chat history")
 
-    print("Thanks for using. See you next time!")
+                sessions = session_manager.list_sessions()
+                if not sessions:
+                    print("暂无历史会话.")
+                    continue
+
+                for session_info in sessions:
+                    print_session_info(session_info)
+
+                new_session_id = input("请输入想要切换的会话 ID: ")
+                try:
+                    session_manager.switch_to_session(new_session_id)
+                    print(f"Switched to session: {session_manager.current_session_id}")
+                except ValueError:
+                    logger.warning("Invalid session ID entered: %s", new_session_id)
+                    print("无效的会话ID，请重试.")
+                continue
+
+            await stream_answer(choice.question, session_manager)
+    finally:
+        session_manager.close()
+
+    print("感谢使用！")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nThanks for using. See you next time!")
+        print("\n感谢使用！")
