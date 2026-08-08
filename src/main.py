@@ -15,7 +15,7 @@ logger = configure_logging()
 
 
 def print_session_info(session_info: SessionInfo) -> None:
-    """在命令行中展示一条历史会话记录。"""
+    """展示一条历史会话记录"""
     print(
         f"Session ID: {session_info.session_id}, "
         f"Created At: {session_info.created_at}, "

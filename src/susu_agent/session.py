@@ -1,5 +1,3 @@
-"""会话的创建、切换、查询与关闭。"""
-
 import logging
 import os
 import re
@@ -84,7 +82,7 @@ class SessionManager:
             raise
 
     def switch_to_session(self, session_id: str) -> SQLiteSession:
-        """切换到一个已经持久化的会话。"""
+        """切换到一个已经持久化的会话"""
         normalized_session_id = session_id.strip()
         known_session_ids = {session.session_id for session in self.list_sessions()}
         if normalized_session_id not in known_session_ids:
@@ -96,7 +94,7 @@ class SessionManager:
         return self._session
 
     def close(self) -> None:
-        """关闭当前会话；重复调用是安全的。"""
+        """关闭当前会话， 重复调用不会报错"""
         if self._session is None:
             return
 
@@ -105,7 +103,7 @@ class SessionManager:
         logger.info("Closed active session")
 
     def _find_next_session_number(self) -> int:
-        """从已有 problem_数字 会话中推导下一个可用编号。"""
+        """返回下一个可用编号"""
         pattern = re.compile(rf"^{re.escape(self._session_prefix)}_(\d+)$")
         session_numbers = [
             int(match.group(1))
