@@ -13,10 +13,12 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
             "type": "string",
             "minLength": 1,
         },
+
         "schema_version": {
             "type": "integer",
             "minimum": 1,
         },
+
         "original_problem": {
             "type": "object",
             "properties": {
@@ -44,19 +46,85 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
             "required": ["problem_statement"],
             "additionalProperties": False,
         },
-        "current_framework_step": {
-            "type": "object",
-            "properties": {
-                "framework": {"type": "string", "maxLength": 100},
-                "goal": {"type": "string", "maxLength": 500},
-                "index": {
-                    "type": "integer",
-                    "minimum": 0,
+
+        "open_question_history": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question_id": {
+                        "type": "string",
+                        "pattern": "^question_[0-9]+$",
+                        "maxLength": 100,
+                    },
+                    "question": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1_000,
+                    },
+                    "stage": {
+                        "type": "string",
+                        "enum": [
+                            "understand_problem",
+                            "recall_knowledge",
+                            "make_plan",
+                            "solve",
+                            "verify",
+                            "complete",
+                        ],
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["open", "answered", "superseded", "abandoned"],
+                    },
+                    "asked_at": {
+                        "type": "string",
+                        "format": "date-time",
+                    },
+                    "student_answer_summary": {
+                        "type": ["string", "null"],
+                        "maxLength": 500,
+                    },
+                    "agent_assessment": {
+                        "type": "object",
+                        "properties": {
+                            "understanding": {
+                                "type": "string",
+                                "enum": [
+                                    "not_answered",
+                                    "no_idea",
+                                    "incorrect",
+                                    "partially_correct",
+                                    "correct",
+                                    "unclear",
+                                ],
+                            },
+                            "summary": {
+                                "type": "string",
+                                "maxLength": 500,
+                            },
+                        },
+                        "required": ["understanding", "summary"],
+                        "additionalProperties": False,
+                    },
+                    "resolved_at": {
+                        "type": ["string", "null"],
+                        "format": "date-time",
+                    },
                 },
+                "required": [
+                    "question_id",
+                    "question",
+                    "stage",
+                    "status",
+                    "asked_at",
+                    "student_answer_summary",
+                    "agent_assessment",
+                ],
+                "additionalProperties": False,
             },
-            "required": ["framework", "goal", "index"],
-            "additionalProperties": False,
         },
+
         "teaching_progress": {
             "type": "object",
             "properties": {
@@ -114,14 +182,6 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
         "student_model": {
             "type": "object",
             "properties": {
-                "identity": {
-                    "type": "object",
-                    "properties": {
-                        "grade": {"type": "string", "maxLength": 50},
-                        "summary": {"type": "string", "maxLength": 500},
-                    },
-                    "additionalProperties": False,
-                },
                 "status": {
                     "type": "object",
                     "properties": {
@@ -150,10 +210,12 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
             },
             "additionalProperties": False,
         },
+
         "updated_at": {
             "type": "string",
             "format": "date-time",
         },
+
         "memory_meta": {
             "type": "object",
             "properties": {
@@ -178,7 +240,13 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
         },
     },
-    "required": ["session_id", "schema_version", "updated_at", "memory_meta"],
+    "required": [
+        "session_id",
+        "schema_version",
+        "open_question_history",
+        "updated_at",
+        "memory_meta",
+    ],
     "additionalProperties": False,
 }
 

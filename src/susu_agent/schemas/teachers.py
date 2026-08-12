@@ -1,4 +1,4 @@
-"""虚拟教师配置的 JSON Schema。"""
+"""教师用户资料、教学习惯与偏好的 JSON Schema。"""
 
 from typing import Any
 
@@ -25,17 +25,41 @@ TEACHER_MODEL_SCHEMA: dict[str, Any] = {
             "type": "string",
             "format": "date-time",
         },
-        "profile": {
+        "personal_info": {
             "type": "object",
             "properties": {
-                "display_name": {
+                "name": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 50,
                 },
-                "role": {
-                    "type": "string",
-                    "enum": ["ai_tutor", "human_teacher"],
+                "age": {
+                    "type": ["integer", "null"],
+                    "minimum": 0,
+                },
+                "phone_number": {
+                    "type": ["string", "null"],
+                    "maxLength": 20,
+                },
+                "email_address": {
+                    "type": ["string", "null"],
+                    "format": "email",
+                    "maxLength": 254,
+                },
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+        "professional_profile": {
+            "type": "object",
+            "properties": {
+                "school_name": {
+                    "type": ["string", "null"],
+                    "maxLength": 100,
+                },
+                "title": {
+                    "type": ["string", "null"],
+                    "maxLength": 100,
                 },
                 "subjects": {
                     "type": "array",
@@ -50,17 +74,85 @@ TEACHER_MODEL_SCHEMA: dict[str, Any] = {
                     "uniqueItems": True,
                     "items": {"type": "string", "maxLength": 50},
                 },
+                "years_of_experience": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 80,
+                },
+                "qualifications": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {"type": "string", "maxLength": 200},
+                },
             },
-            "required": ["display_name", "role", "subjects"],
+            "required": ["subjects"],
             "additionalProperties": False,
         },
-        "teaching_policy": {
+        "teaching_habits": {
+            "type": "object",
+            "properties": {
+                "lesson_preparation_style": {
+                    "type": "string",
+                    "enum": ["framework_first", "problem_first", "mixed"],
+                },
+                "homework_policy": {
+                    "type": "string",
+                    "enum": ["none", "optional", "regular", "intensive"],
+                },
+                "assessment_frequency": {
+                    "type": "string",
+                    "enum": [
+                        "unknown",
+                        "per_lesson",
+                        "weekly",
+                        "unit_based",
+                        "monthly",
+                    ],
+                },
+                "notes": {"type": "string", "maxLength": 1_000},
+            },
+            "additionalProperties": False,
+        },
+        "teaching_style": {
             "type": "object",
             "properties": {
                 "primary_method": {
                     "type": "string",
                     "enum": ["socratic", "direct_instruction", "mixed"],
                 },
+                "explanation_styles": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "visual",
+                            "step_by_step",
+                            "example_first",
+                            "concise",
+                        ],
+                    },
+                },
+                "interaction_style": {
+                    "type": "string",
+                    "enum": ["question_led", "discussion", "lecture", "mixed"],
+                },
+                "feedback_style": {
+                    "type": "string",
+                    "enum": ["encouraging", "direct", "balanced"],
+                },
+                "teaching_pace": {
+                    "type": "string",
+                    "enum": ["slow", "normal", "fast", "adaptive"],
+                },
+            },
+            "required": ["primary_method"],
+            "additionalProperties": False,
+        },
+        "teaching_preferences": {
+            "type": "object",
+            "properties": {
                 "answer_policy": {
                     "type": "string",
                     "enum": [
@@ -81,63 +173,29 @@ TEACHER_MODEL_SCHEMA: dict[str, Any] = {
                     "minimum": 1,
                     "maximum": 3,
                 },
-                "hint_levels": {
+                "preferred_framework_ids": {
                     "type": "array",
-                    "minItems": 1,
-                    "maxItems": 6,
+                    "maxItems": 50,
                     "uniqueItems": True,
                     "items": {
-                        "type": "string",
-                        "enum": [
-                            "restate_goal",
-                            "remind_condition",
-                            "remind_knowledge",
-                            "suggest_method",
-                            "show_partial_step",
-                            "full_solution",
-                        ],
-                    },
-                },
-            },
-            "required": [
-                "primary_method",
-                "answer_policy",
-                "framework_policy",
-                "max_primary_questions_per_turn",
-                "hint_levels",
-            ],
-            "additionalProperties": False,
-        },
-        "frameworks": {
-            "type": "array",
-            "maxItems": 50,
-            "items": {
-                "type": "object",
-                "properties": {
-                    "framework_id": {
                         "type": "string",
                         "pattern": "^[a-z][a-z0-9_]*$",
                         "maxLength": 100,
                     },
-                    "subject": {"type": "string", "enum": SUBJECTS},
-                    "source_path": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 500,
-                    },
-                    "summary": {"type": "string", "maxLength": 500},
                 },
-                "required": ["framework_id", "subject", "source_path"],
-                "additionalProperties": False,
             },
+            "required": ["answer_policy", "framework_policy"],
+            "additionalProperties": False,
         },
     },
     "required": [
         "teacher_id",
         "schema_version",
         "updated_at",
-        "profile",
-        "teaching_policy",
+        "personal_info",
+        "professional_profile",
+        "teaching_style",
+        "teaching_preferences",
     ],
     "additionalProperties": False,
 }
@@ -149,5 +207,5 @@ TEACHER_MODEL_VALIDATOR = Draft202012Validator(
 
 
 def validate_teacher_model(teacher_model: dict[str, Any]) -> None:
-    """校验教师配置，不符合 schema 时抛出 ValidationError。"""
+    """校验教师用户资料，不符合 schema 时抛出 ValidationError。"""
     TEACHER_MODEL_VALIDATOR.validate(teacher_model)

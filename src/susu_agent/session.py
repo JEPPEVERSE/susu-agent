@@ -50,6 +50,11 @@ class SessionManager:
             return None
         return self._session.session_id
 
+    @property
+    def db_path(self) -> Path:
+        """返回当前会话所使用的 SQLite 数据库路径。"""
+        return self._db_path
+
     def start_new_session(self) -> SQLiteSession:
         """关闭旧会话并创建一个新的会话。"""
         self.close()
