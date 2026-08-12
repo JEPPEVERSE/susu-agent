@@ -11,7 +11,8 @@ def _get_log_level(level_name: str) -> int:
 
 
 def configure_logging() -> logging.Logger:
-    """Configure and return the application's console logger.
+    """
+    Configure and return the application's console logger.
 
     LOG_LEVEL controls the minimum level. Calling this function more than once
     replaces existing handlers instead of duplicating log lines.
