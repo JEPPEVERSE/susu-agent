@@ -152,7 +152,7 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                     "maxItems": 20,
                     "items": {
                         "type": "string",
-                        "pattern": "^[a-z][a-z0-9_]*$",
+                        "minLength": 1,
                         "maxLength": 100,
                     },
                 },

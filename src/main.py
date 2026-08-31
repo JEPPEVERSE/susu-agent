@@ -13,12 +13,14 @@ from susu_agent.agents.teaching_state_updater import (
     teaching_state_updater,
 )
 from susu_agent.choice import Choice, ChoiceAction
+from susu_agent.context_builder import ContextBuilder, ContextMessage
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
 from susu_agent.session import SessionInfo, SessionManager
 
 load_dotenv()
 
 logger = configure_logging()
+context_builder = ContextBuilder(recent_message_limit=6)
 
 
 def print_session_info(session_info: SessionInfo) -> None:
@@ -103,13 +105,86 @@ def read_choice() -> Choice:
             print(error)
 
 
-async def stream_answer(question: str, session_manager: SessionManager) -> str | None:
+async def build_math_tutor_input(
+    question: str,
+    session_manager: SessionManager,
+    teaching_state_repository: TeachingStateRepository,
+) -> str:
+    """从存档中读取有限消息，并用 ContextBuilder 组装本轮模型输入。"""
+    session_id = session_manager.current_session_id
+    if session_id is None:
+        raise RuntimeError("Cannot build context without an active session.")
+
+    teaching_state = teaching_state_repository.get_or_create(session_id)
+    if "original_problem" not in teaching_state:
+        teaching_state["original_problem"] = {"problem_statement": question}
+
+    stored_items = await session_manager.current_session.get_items(limit=6)
+    recent_messages = [
+        context_message
+        for item in stored_items
+        if (context_message := to_context_message(item)) is not None
+    ]
+    return context_builder.build_prompt(
+        teaching_state=teaching_state,
+        recent_messages=recent_messages,
+        current_user_message=question,
+    )
+
+
+def to_context_message(item: object) -> ContextMessage | None:
+    """将 SQLiteSession 的消息格式转换为 ContextBuilder 所需的简洁格式。"""
+    if not isinstance(item, dict):
+        return None
+
+    role = item.get("role")
+    if role not in {"user", "assistant"}:
+        return None
+
+    content = extract_text_content(item.get("content"))
+    if not content:
+        return None
+
+    return ContextMessage(role=role, content=content)
+
+
+def extract_text_content(content: object) -> str:
+    """兼容 SDK 消息中字符串或内容块列表两种 content 结构。"""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+
+    text_parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text = block.get("text") or block.get("content")
+        if isinstance(text, str):
+            text_parts.append(text)
+    return "\n".join(text_parts).strip()
+
+
+async def persist_conversation_turn(
+    question: str,
+    teacher_response: str,
+    session_manager: SessionManager,
+) -> None:
+    """把原始问答写入 SQLiteSession，仅用于审计和下一轮有限窗口读取。"""
+    await session_manager.current_session.add_items(
+        [
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": teacher_response},
+        ]
+    )
+
+
+async def stream_answer(context_input: str) -> str | None:
     try:
         logger.info("Starting an agent response")
         result = Runner.run_streamed(
             math_tutor_agent,
-            input=question,
-            session=session_manager.current_session,
+            input=context_input,
         )
 
         async for event in result.stream_events():
@@ -207,8 +282,27 @@ async def main() -> None:
                 )
                 continue
 
-            teacher_response = await stream_answer(choice.question, session_manager)
+            try:
+                context_input = await build_math_tutor_input(
+                    choice.question,
+                    session_manager,
+                    teaching_state_repository,
+                )
+            except Exception:
+                logger.exception("Failed to build math tutor context")
+                print("无法构建本轮教学上下文，请重试。")
+                continue
+
+            teacher_response = await stream_answer(context_input)
             if teacher_response is not None:
+                try:
+                    await persist_conversation_turn(
+                        choice.question,
+                        teacher_response,
+                        session_manager,
+                    )
+                except Exception:
+                    logger.exception("Failed to persist conversation turn")
                 await update_teaching_state(
                     choice.question,
                     teacher_response,

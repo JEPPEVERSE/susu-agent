@@ -8,13 +8,41 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from main import print_current_runtime_state, update_teaching_state
+from main import (
+    build_math_tutor_input,
+    persist_conversation_turn,
+    print_current_runtime_state,
+    update_teaching_state,
+)
 from susu_agent.agents.teaching_state_updater import TeachingStateUpdate
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
 
 
 class StubSessionManager:
     current_session_id = "problem_42"
+
+
+class ArchiveSession:
+    def __init__(self) -> None:
+        self.items = [
+            {"role": "user", "content": "previous question"},
+            {"role": "assistant", "content": "previous teacher reply"},
+            {"role": "tool", "content": "tool message"},
+        ]
+        self.persisted_items: list[dict[str, str]] = []
+
+    async def get_items(self, limit: int) -> list[dict[str, str]]:
+        return self.items[-limit:]
+
+    async def add_items(self, items: list[dict[str, str]]) -> None:
+        self.persisted_items.extend(items)
+
+
+class ContextSessionManager:
+    current_session_id = "problem_42"
+
+    def __init__(self) -> None:
+        self.current_session = ArchiveSession()
 
 
 class StubTeachingStateRepository:
@@ -86,6 +114,42 @@ class MainRuntimeStateTests(unittest.TestCase):
         self.assertEqual(
             repository.saved_state["original_problem"]["problem_statement"],
             "求函数的定义域",
+        )
+
+    def test_context_builder_controls_the_math_tutor_input(self) -> None:
+        session_manager = ContextSessionManager()
+        repository = StatefulTeachingStateRepository()
+
+        import asyncio
+
+        context_input = asyncio.run(
+            build_math_tutor_input("current question", session_manager, repository)
+        )
+
+        self.assertIn("<teaching_context>", context_input)
+        self.assertIn('"current_user_message": "current question"', context_input)
+        self.assertIn("previous question", context_input)
+        self.assertNotIn("tool message", context_input)
+
+    def test_raw_conversation_is_persisted_after_the_model_reply(self) -> None:
+        session_manager = ContextSessionManager()
+
+        import asyncio
+
+        asyncio.run(
+            persist_conversation_turn(
+                "current question",
+                "teacher reply",
+                session_manager,
+            )
+        )
+
+        self.assertEqual(
+            session_manager.current_session.persisted_items,
+            [
+                {"role": "user", "content": "current question"},
+                {"role": "assistant", "content": "teacher reply"},
+            ],
         )
 
 
