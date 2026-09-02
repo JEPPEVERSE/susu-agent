@@ -17,7 +17,7 @@ class Choice:
 
     def __post_init__(self) -> None:
         if self.action is ChoiceAction.ASK and not self.text:
-            raise ValueError("A math question cannot be empty.")
+            raise ValueError("A learning question cannot be empty.")
 
         if self.action is not ChoiceAction.ASK and self.text is not None:
             raise ValueError("A command choice cannot contain question text.")
@@ -27,7 +27,7 @@ class Choice:
         value = raw_value.strip()
 
         if not value:
-            raise ValueError("Please enter a math question or a command.")
+            raise ValueError("Please enter a learning question or a command.")
 
         command = value.casefold()
         if command == "/new":
@@ -44,6 +44,6 @@ class Choice:
     @property
     def question(self) -> str:
         if self.action is not ChoiceAction.ASK or self.text is None:
-            raise ValueError("Only an ask choice contains a math question.")
+            raise ValueError("Only an ask choice contains a learning question.")
 
         return self.text

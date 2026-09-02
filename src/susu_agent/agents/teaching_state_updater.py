@@ -13,18 +13,45 @@ class TeachingStateUpdate(BaseModel):
     """状态更新 Agent 对单轮对话产生的增量更新。"""
 
     stage: Literal[
-        "understand_problem",
+        "understand_task",
         "recall_knowledge",
         "make_plan",
-        "solve",
+        "execute",
         "verify",
         "complete",
     ] | None = None
+
+    current_lesson_plan_step_id: str | None = Field(
+        default=None,
+        max_length=200,
+    )
+    completed_lesson_plan_step_ids_to_add: list[str] = Field(
+        default_factory=list,
+    )
+    lesson_plan_step_summary: str | None = Field(
+        default=None,
+        max_length=1_000,
+    )
 
     confirmed_steps_to_add: list[str] = Field(default_factory=list)
     misconceptions_to_add: list[str] = Field(default_factory=list)
 
     open_question: str | None = None
+    answered_open_question_summary: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+    answered_open_question_understanding: Literal[
+        "no_idea",
+        "incorrect",
+        "partially_correct",
+        "correct",
+        "unclear",
+    ] | None = None
+    answered_open_question_assessment: str | None = Field(
+        default=None,
+        max_length=500,
+    )
     next_teacher_action: Literal[
         "ask_question",
         "give_hint",
@@ -58,6 +85,28 @@ def apply_teaching_state_update(
         teaching_progress["stage"] = update.stage
     if update.next_teacher_action is not None:
         teaching_progress["next_teacher_action"] = update.next_teacher_action
+    allowed_step_ids = set(next_state["lesson_plan"]["step_ids"])
+    if update.current_lesson_plan_step_id is not None:
+        _require_known_step_id(
+            update.current_lesson_plan_step_id,
+            allowed_step_ids,
+        )
+        teaching_progress["current_lesson_plan_step_id"] = (
+            update.current_lesson_plan_step_id
+        )
+    if update.lesson_plan_step_summary is not None:
+        teaching_progress["lesson_plan_step_summary"] = (
+            update.lesson_plan_step_summary
+        )
+
+    _extend_unique(
+        teaching_progress.setdefault("completed_lesson_plan_step_ids", []),
+        _validated_step_ids(
+            update.completed_lesson_plan_step_ids_to_add,
+            allowed_step_ids,
+        ),
+        maximum_size=50,
+    )
 
     _extend_unique(
         teaching_progress.setdefault("confirmed_steps", []),
@@ -70,12 +119,24 @@ def apply_teaching_state_update(
         maximum_size=10,
     )
 
+    _record_open_question_answer(
+        next_state.setdefault("open_question_history", []),
+        teaching_progress=teaching_progress,
+        answer_summary=update.answered_open_question_summary,
+        understanding=update.answered_open_question_understanding,
+        assessment=update.answered_open_question_assessment,
+        now=now,
+    )
+
     if update.open_question is not None:
         teaching_progress["open_question"] = update.open_question
         _replace_open_question(
-            next_state.setdefault("open_question_history", []),
+            next_state["open_question_history"],
             question=update.open_question,
-            stage=teaching_progress.get("stage", "understand_problem"),
+            stage=teaching_progress.get("stage", "understand_task"),
+            lesson_plan_step_id=teaching_progress.get(
+                "current_lesson_plan_step_id"
+            ),
             now=now,
         )
 
@@ -99,11 +160,32 @@ def _extend_unique(
             existing_items.append(item)
 
 
+def _require_known_step_id(
+    step_id: str,
+    allowed_step_ids: set[str],
+) -> None:
+    if step_id not in allowed_step_ids:
+        raise ValueError(
+            f"Unknown lesson plan step id {step_id!r}; "
+            f"expected one of {sorted(allowed_step_ids)!r}."
+        )
+
+
+def _validated_step_ids(
+    step_ids: list[str],
+    allowed_step_ids: set[str],
+) -> list[str]:
+    for step_id in step_ids:
+        _require_known_step_id(step_id, allowed_step_ids)
+    return step_ids
+
+
 def _replace_open_question(
     question_history: list[dict[str, Any]],
     *,
     question: str,
     stage: str,
+    lesson_plan_step_id: str | None,
     now: str,
 ) -> None:
     """关闭先前未答问题，并将本轮新问题写入历史。"""
@@ -130,6 +212,7 @@ def _replace_open_question(
             "question_id": f"question_{next_question_number}",
             "question": question,
             "stage": stage,
+            "lesson_plan_step_id": lesson_plan_step_id,
             "status": "open",
             "asked_at": now,
             "student_answer_summary": None,
@@ -140,3 +223,39 @@ def _replace_open_question(
             "resolved_at": None,
         }
     )
+
+
+def _record_open_question_answer(
+    question_history: list[dict[str, Any]],
+    *,
+    teaching_progress: dict[str, Any],
+    answer_summary: str | None,
+    understanding: str | None,
+    assessment: str | None,
+    now: str,
+) -> None:
+    """将本轮学生对最近开放问题的回答与判断回填到历史记录。"""
+    answer_fields = (answer_summary, understanding, assessment)
+    if all(value is None for value in answer_fields):
+        return
+    if any(value is None for value in answer_fields):
+        raise ValueError(
+            "An open-question answer requires summary, understanding, and assessment."
+        )
+
+    open_questions = [
+        item for item in question_history if item["status"] == "open"
+    ]
+    if not open_questions:
+        raise ValueError("Cannot record an answer because there is no open question.")
+
+    question = open_questions[-1]
+    question["status"] = "answered"
+    question["student_answer_summary"] = answer_summary
+    question["agent_assessment"] = {
+        "understanding": understanding,
+        "summary": assessment,
+    }
+    question["resolved_at"] = now
+    if teaching_progress.get("open_question") == question["question"]:
+        teaching_progress["open_question"] = None

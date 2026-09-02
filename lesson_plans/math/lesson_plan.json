@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "subject": "math",
+  "lesson_plan_version": "0.1.0",
+  "instruction_files": [
+    "math_tutor_core.md"
+  ],
+  "context_files": [
+    "math_problem_solving_framework.md"
+  ],
+  "always_include_context_headings": [
+    "一、总纲：解题是在结构中逐步消除不确定性"
+  ],
+  "steps": [
+    {
+      "id": "S1",
+      "name": "明确研究对象与交付目标",
+      "context_headings": [
+        "2.1 对象、条件与目标：先问“谁”，再问“怎么样”",
+        "F1：审题与目标确认"
+      ]
+    },
+    {
+      "id": "S2",
+      "name": "提取条件与合法边界",
+      "context_headings": [
+        "F2：条件整理与合法性检查"
+      ]
+    },
+    {
+      "id": "S3",
+      "name": "确定动静关系与控制参数",
+      "context_headings": [
+        "2.2 自由度与动静：选择能控制对象的独立参数",
+        "F3：动静分析与表示选择"
+      ]
+    },
+    {
+      "id": "S4",
+      "name": "建立要素关系网与选择表示",
+      "context_headings": [
+        "2.3 要素关系网：谁由谁决定，谁又限制了谁",
+        "F3：动静分析与表示选择"
+      ]
+    },
+    {
+      "id": "S5",
+      "name": "目标倒推与定位元问题",
+      "context_headings": [
+        "2.4 元问题：把大题拆成能解释清楚的小任务",
+        "F4：目标倒推与局部计划"
+      ]
+    },
+    {
+      "id": "S6",
+      "name": "条件转化与等价性审计",
+      "context_headings": [
+        "2.5 充要替换：简化表达，但不改变问题",
+        "F5：元问题识别与条件转化"
+      ]
+    },
+    {
+      "id": "S7",
+      "name": "局部求解与回填迭代",
+      "context_headings": [
+        "F6：局部求解与迭代"
+      ]
+    },
+    {
+      "id": "S8",
+      "name": "原题检验与结论表达",
+      "context_headings": [
+        "2.6 即时检查：让错误停留在发生的位置",
+        "F7：原题检验与完整表达"
+      ]
+    },
+    {
+      "id": "S9",
+      "name": "复盘思维断点与迁移",
+      "context_headings": [
+        "F8：复盘与迁移",
+        "十、复盘与练习：记录第一处断点"
+      ]
+    }
+  ]
+}
