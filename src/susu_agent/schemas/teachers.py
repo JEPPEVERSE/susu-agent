@@ -17,14 +17,17 @@ TEACHER_MODEL_SCHEMA: dict[str, Any] = {
             "minLength": 1,
             "maxLength": 100,
         },
+
         "schema_version": {
             "type": "integer",
             "minimum": 1,
         },
+
         "updated_at": {
             "type": "string",
             "format": "date-time",
         },
+        
         "personal_info": {
             "type": "object",
             "properties": {

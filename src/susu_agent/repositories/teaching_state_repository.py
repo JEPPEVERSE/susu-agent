@@ -1,4 +1,5 @@
 import json
+import logging
 import sqlite3
 from copy import deepcopy
 from contextlib import closing
@@ -8,6 +9,9 @@ from typing import Any
 
 from susu_agent.lesson_plan_loader import LessonPlanBundle, LessonPlanLoader
 from susu_agent.schemas.teaching_state import validate_teaching_state
+
+
+logger = logging.getLogger(__name__)
 
 
 class TeachingStateRepository:
@@ -22,6 +26,7 @@ class TeachingStateRepository:
         self._lesson_plan_loader = lesson_plan_loader or LessonPlanLoader()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_table()
+        logger.debug("Initialized teaching state repository at %s", self._db_path)
 
     def _initialize_table(self) -> None:
         with closing(sqlite3.connect(self._db_path)) as connection:
@@ -57,6 +62,7 @@ class TeachingStateRepository:
             ).fetchone()
 
         if row is None:
+            logger.debug("No teaching state found for session %s", session_id)
             return None
 
         stored_state = json.loads(row[0])
@@ -75,6 +81,7 @@ class TeachingStateRepository:
         validate_teaching_state(state)
         if state != stored_state:
             self.save(state, lesson_plan=lesson_plan)
+            logger.info("Migrated teaching state for session %s", session_id)
         return state, lesson_plan
 
     def get_or_create(self, session_id: str) -> dict[str, Any]:
@@ -92,6 +99,7 @@ class TeachingStateRepository:
             return result
 
         lesson_plan = self._lesson_plan_loader.load(self._default_subject)
+        logger.info("Creating initial teaching state for session %s", session_id)
         state = self.create_initial_state(
             session_id,
             lesson_plan=lesson_plan,
@@ -285,6 +293,7 @@ class TeachingStateRepository:
                         state["updated_at"],
                     ),
                 )
+        logger.debug("Saved teaching state for session %s", state["session_id"])
 
     @classmethod
     def _validate_lesson_plan_references(

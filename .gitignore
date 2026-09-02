@@ -37,6 +37,9 @@ logs/
 .vscode/
 .idea/
 
+# 本地临时前端（v0.1 测试工具）
+/local_web/
+
 # 系统文件
 .DS_Store
 Thumbs.db
