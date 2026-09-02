@@ -16,7 +16,61 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
 
         "schema_version": {
             "type": "integer",
-            "minimum": 1,
+            "const": 3,
+        },
+
+        "lesson_plan": {
+            "type": "object",
+            "properties": {
+                "subject": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]*$",
+                    "maxLength": 100,
+                },
+                "manifest_schema_version": {
+                    "type": "integer",
+                    "minimum": 1,
+                },
+                "lesson_plan_version": {
+                    "type": "string",
+                    "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+                },
+                "step_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,99}$",
+                    },
+                },
+                "instruction_sources": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "maxLength": 500},
+                },
+                "context_sources": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "maxLength": 500},
+                },
+                "content_digest": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$",
+                },
+            },
+            "required": [
+                "subject",
+                "manifest_schema_version",
+                "lesson_plan_version",
+                "step_ids",
+                "instruction_sources",
+                "context_sources",
+                "content_digest",
+            ],
+            "additionalProperties": False,
         },
 
         "original_problem": {
@@ -65,13 +119,17 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                     "stage": {
                         "type": "string",
                         "enum": [
-                            "understand_problem",
+                            "understand_task",
                             "recall_knowledge",
                             "make_plan",
-                            "solve",
+                            "execute",
                             "verify",
                             "complete",
                         ],
+                    },
+                    "lesson_plan_step_id": {
+                        "type": ["string", "null"],
+                        "maxLength": 200,
                     },
                     "status": {
                         "type": "string",
@@ -116,6 +174,7 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                     "question_id",
                     "question",
                     "stage",
+                    "lesson_plan_step_id",
                     "status",
                     "asked_at",
                     "student_answer_summary",
@@ -131,13 +190,31 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                 "stage": {
                     "type": "string",
                     "enum": [
-                        "understand_problem",
+                        "understand_task",
                         "recall_knowledge",
                         "make_plan",
-                        "solve",
+                        "execute",
                         "verify",
                         "complete",
                     ],
+                },
+                "current_lesson_plan_step_id": {
+                    "type": ["string", "null"],
+                    "maxLength": 200,
+                },
+                "completed_lesson_plan_step_ids": {
+                    "type": "array",
+                    "maxItems": 50,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200,
+                    },
+                },
+                "lesson_plan_step_summary": {
+                    "type": "string",
+                    "maxLength": 1_000,
                 },
                 "hints_num": {
                     "type": "integer",
@@ -173,6 +250,9 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
             },
             "required": [
                 "stage",
+                "current_lesson_plan_step_id",
+                "completed_lesson_plan_step_ids",
+                "lesson_plan_step_summary",
                 "hints_num",
                 "confirmed_steps",
                 "next_teacher_action",
@@ -243,7 +323,10 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
     "required": [
         "session_id",
         "schema_version",
+        "lesson_plan",
         "open_question_history",
+        "teaching_progress",
+        "student_model",
         "updated_at",
         "memory_meta",
     ],

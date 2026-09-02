@@ -1,12 +1,14 @@
 import asyncio
 import json
+import os
+from dataclasses import dataclass
 
 from agents import Runner
 from dotenv import load_dotenv
 from openai.types.responses import ResponseTextDeltaEvent
 
 from logging_config import configure_logging
-from susu_agent.agents.math_tutor import math_tutor_agent
+from susu_agent.agents.tutor import TutorRunContext, tutor_agent
 from susu_agent.agents.teaching_state_updater import (
     TeachingStateUpdate,
     apply_teaching_state_update,
@@ -14,13 +16,24 @@ from susu_agent.agents.teaching_state_updater import (
 )
 from susu_agent.choice import Choice, ChoiceAction
 from susu_agent.context_builder import ContextBuilder, ContextMessage
+from susu_agent.lesson_plan_loader import LessonPlanBundle
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
 from susu_agent.session import SessionInfo, SessionManager
 
 load_dotenv()
 
 logger = configure_logging()
+course_subject = os.getenv("COURSE_SUBJECT", "math").strip() or "math"
 context_builder = ContextBuilder(recent_message_limit=6)
+
+
+@dataclass(frozen=True, slots=True)
+class TutorTurn:
+    """同一轮教学共享的输入、状态和教案快照。"""
+
+    context_input: str
+    teaching_state: dict[str, object]
+    lesson_plan: LessonPlanBundle
 
 
 def print_session_info(session_info: SessionInfo) -> None:
@@ -92,7 +105,7 @@ def show_history_and_switch_session(
 def read_choice() -> Choice:
     while True:
         try:
-            raw_value = input("数学问题（/new、/history、/status、/exit）：")
+            raw_value = input("学习问题（/new、/history、/status、/exit）：")
         except (EOFError, KeyboardInterrupt):
             logger.info("Received terminal exit signal")
             print()
@@ -105,17 +118,19 @@ def read_choice() -> Choice:
             print(error)
 
 
-async def build_math_tutor_input(
+async def build_tutor_input(
     question: str,
     session_manager: SessionManager,
     teaching_state_repository: TeachingStateRepository,
-) -> str:
+) -> TutorTurn:
     """从存档中读取有限消息，并用 ContextBuilder 组装本轮模型输入。"""
     session_id = session_manager.current_session_id
     if session_id is None:
         raise RuntimeError("Cannot build context without an active session.")
 
-    teaching_state = teaching_state_repository.get_or_create(session_id)
+    teaching_state, lesson_plan = (
+        teaching_state_repository.get_or_create_with_lesson_plan(session_id)
+    )
     if "original_problem" not in teaching_state:
         teaching_state["original_problem"] = {"problem_statement": question}
 
@@ -125,10 +140,15 @@ async def build_math_tutor_input(
         for item in stored_items
         if (context_message := to_context_message(item)) is not None
     ]
-    return context_builder.build_prompt(
+    return TutorTurn(
+        context_input=context_builder.build_prompt(
+            teaching_state=teaching_state,
+            recent_messages=recent_messages,
+            current_user_message=question,
+            lesson_plan=lesson_plan,
+        ),
         teaching_state=teaching_state,
-        recent_messages=recent_messages,
-        current_user_message=question,
+        lesson_plan=lesson_plan,
     )
 
 
@@ -179,12 +199,16 @@ async def persist_conversation_turn(
     )
 
 
-async def stream_answer(context_input: str) -> str | None:
+async def stream_answer(
+    context_input: str,
+    lesson_plan: LessonPlanBundle,
+) -> str | None:
     try:
         logger.info("Starting an agent response")
         result = Runner.run_streamed(
-            math_tutor_agent,
+            tutor_agent,
             input=context_input,
+            context=TutorRunContext(lesson_plan=lesson_plan),
         )
 
         async for event in result.stream_events():
@@ -205,15 +229,12 @@ async def stream_answer(context_input: str) -> str | None:
 async def update_teaching_state(
     question: str,
     teacher_response: str,
-    session_manager: SessionManager,
+    current_teaching_state: dict[str, object],
+    lesson_plan: LessonPlanBundle,
     teaching_state_repository: TeachingStateRepository,
 ) -> None:
     """调用后台更新器，合并并保存本轮教学状态。"""
-    session_id = session_manager.current_session_id
-    if session_id is None:
-        raise RuntimeError("Cannot update teaching state without an active session.")
-
-    current_teaching_state = teaching_state_repository.get_or_create(session_id)
+    session_id = current_teaching_state["session_id"]
     if "original_problem" not in current_teaching_state:
         current_teaching_state["original_problem"] = {
             "problem_statement": question,
@@ -224,6 +245,11 @@ async def update_teaching_state(
             "current_teaching_state": current_teaching_state,
             "student_message": question,
             "teacher_response": teacher_response,
+            "lesson_plan_instruction": lesson_plan.instruction,
+            "lesson_plan_steps": [
+                {"id": step.step_id, "name": step.name}
+                for step in lesson_plan.steps
+            ],
         },
         ensure_ascii=False,
     )
@@ -241,21 +267,27 @@ async def update_teaching_state(
             current_teaching_state,
             update,
         )
-        teaching_state_repository.save(next_teaching_state)
+        teaching_state_repository.save(
+            next_teaching_state,
+            lesson_plan=lesson_plan,
+        )
         logger.info("Updated teaching state for session %s", session_id)
     except Exception:
         logger.exception("Teaching state update failed for session %s", session_id)
 
 
 async def main() -> None:
-    logger.info("Starting Math Tutor Agent")
+    logger.info("Starting Tutor Agent for subject %s", course_subject)
     print("欢迎使用速速提分 Agent！")
-    print("请输入一个数学问题。")
+    print(f"当前学科：{course_subject}。请输入学习问题。")
     print("/new：开启新对话；/history：查看并切换历史会话。")
     print("/status：查看 session_id 和 current_teaching_state；/exit：退出。")
 
     session_manager = SessionManager()
-    teaching_state_repository = TeachingStateRepository(session_manager.db_path)
+    teaching_state_repository = TeachingStateRepository(
+        session_manager.db_path,
+        default_subject=course_subject,
+    )
     start_and_show_session(session_manager, teaching_state_repository)
 
     try:
@@ -283,17 +315,20 @@ async def main() -> None:
                 continue
 
             try:
-                context_input = await build_math_tutor_input(
+                tutor_turn = await build_tutor_input(
                     choice.question,
                     session_manager,
                     teaching_state_repository,
                 )
             except Exception:
-                logger.exception("Failed to build math tutor context")
+                logger.exception("Failed to build tutor context")
                 print("无法构建本轮教学上下文，请重试。")
                 continue
 
-            teacher_response = await stream_answer(context_input)
+            teacher_response = await stream_answer(
+                tutor_turn.context_input,
+                tutor_turn.lesson_plan,
+            )
             if teacher_response is not None:
                 try:
                     await persist_conversation_turn(
@@ -306,7 +341,8 @@ async def main() -> None:
                 await update_teaching_state(
                     choice.question,
                     teacher_response,
-                    session_manager,
+                    tutor_turn.teaching_state,
+                    tutor_turn.lesson_plan,
                     teaching_state_repository,
                 )
                 print_current_runtime_state(

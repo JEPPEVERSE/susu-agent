@@ -20,6 +20,9 @@ class TeachingStateUpdateTests(unittest.TestCase):
             self.state,
             TeachingStateUpdate(
                 stage="recall_knowledge",
+                current_lesson_plan_step_id="S2",
+                completed_lesson_plan_step_ids_to_add=["S1"],
+                lesson_plan_step_summary="正在确认定义域限制。",
                 confirmed_steps_to_add=["identified_known_conditions"],
                 misconceptions_to_add=["confuses_domain_and_range"],
                 open_question="What condition must the denominator satisfy?",
@@ -29,6 +32,14 @@ class TeachingStateUpdateTests(unittest.TestCase):
         )
 
         self.assertEqual(updated_state["teaching_progress"]["stage"], "recall_knowledge")
+        self.assertEqual(
+            updated_state["teaching_progress"]["current_lesson_plan_step_id"],
+            "S2",
+        )
+        self.assertEqual(
+            updated_state["teaching_progress"]["completed_lesson_plan_step_ids"],
+            ["S1"],
+        )
         self.assertIn(
             "identified_known_conditions",
             updated_state["teaching_progress"]["confirmed_steps"],
@@ -38,6 +49,10 @@ class TeachingStateUpdateTests(unittest.TestCase):
             updated_state["student_model"]["status"]["main_misconceptions"],
         )
         self.assertEqual(updated_state["open_question_history"][0]["status"], "open")
+        self.assertEqual(
+            updated_state["open_question_history"][0]["lesson_plan_step_id"],
+            "S2",
+        )
 
     def test_confirmed_steps_allow_a_chinese_teaching_description(self) -> None:
         updated_state = apply_teaching_state_update(
@@ -88,6 +103,15 @@ class TeachingStateUpdateTests(unittest.TestCase):
                 state_with_question,
                 TeachingStateUpdate(
                     answered_open_question_summary="The student is unsure.",
+                ),
+            )
+
+    def test_unknown_lesson_plan_step_id_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            apply_teaching_state_update(
+                self.state,
+                TeachingStateUpdate(
+                    current_lesson_plan_step_id="S99",
                 ),
             )
 
