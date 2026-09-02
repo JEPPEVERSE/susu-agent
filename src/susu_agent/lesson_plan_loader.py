@@ -1,6 +1,7 @@
 """按学科 JSON 清单加载教案文件。"""
 
 import json
+import logging
 import re
 from hashlib import sha256
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ DEFAULT_LESSON_PLANS_DIRECTORY = (
     Path(__file__).resolve().parents[2] / "lesson_plans"
 )
 _SUBJECT_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +192,7 @@ class LessonPlanLoader:
             ).encode("utf-8")
         ).hexdigest()
 
-        return LessonPlanBundle(
+        lesson_plan = LessonPlanBundle(
             subject=subject,
             manifest_schema_version=manifest_schema_version,
             lesson_plan_version=lesson_plan_version,
@@ -203,6 +205,13 @@ class LessonPlanLoader:
             context_sections=context_sections,
             content_digest=content_digest,
         )
+        logger.debug(
+            "Loaded lesson plan for subject %s (version %s, %d steps)",
+            lesson_plan.subject,
+            lesson_plan.lesson_plan_version,
+            len(lesson_plan.steps),
+        )
+        return lesson_plan
 
     @staticmethod
     def _load_steps(manifest: dict[str, Any]) -> tuple[LessonPlanStep, ...]:

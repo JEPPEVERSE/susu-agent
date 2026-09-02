@@ -1,4 +1,4 @@
-"""为跨学科 Tutor Agent 组装有限、可控的工作上下文。"""
+"""为 Agent 组装有限、可控的工作上下文。"""
 
 import json
 from dataclasses import asdict, dataclass

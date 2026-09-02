@@ -140,7 +140,7 @@ async def build_tutor_input(
         for item in stored_items
         if (context_message := to_context_message(item)) is not None
     ]
-    return TutorTurn(
+    tutor_turn = TutorTurn(
         context_input=context_builder.build_prompt(
             teaching_state=teaching_state,
             recent_messages=recent_messages,
@@ -150,6 +150,12 @@ async def build_tutor_input(
         teaching_state=teaching_state,
         lesson_plan=lesson_plan,
     )
+    logger.debug(
+        "Built tutor context for session %s using %d archived messages",
+        session_id,
+        len(recent_messages),
+    )
+    return tutor_turn
 
 
 def to_context_message(item: object) -> ContextMessage | None:
@@ -197,6 +203,10 @@ async def persist_conversation_turn(
             {"role": "assistant", "content": teacher_response},
         ]
     )
+    logger.debug(
+        "Persisted conversation turn for session %s",
+        session_manager.current_session_id,
+    )
 
 
 async def stream_answer(
@@ -204,7 +214,10 @@ async def stream_answer(
     lesson_plan: LessonPlanBundle,
 ) -> str | None:
     try:
-        logger.info("Starting an agent response")
+        logger.info(
+            "Starting tutor agent response for lesson plan %s",
+            lesson_plan.subject,
+        )
         result = Runner.run_streamed(
             tutor_agent,
             input=context_input,
@@ -217,6 +230,7 @@ async def stream_answer(
                 and isinstance(event.data, ResponseTextDeltaEvent)
             ):
                 print(event.data.delta, end="", flush=True)
+        logger.info("Tutor agent response completed")
         return str(result.final_output)
     except Exception as error:
         logger.exception("Agent request failed")
@@ -359,4 +373,8 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
+        logger.info("Application interrupted by user")
         print("\n感谢使用！")
+    except Exception:
+        logger.exception("Application terminated unexpectedly")
+        raise
