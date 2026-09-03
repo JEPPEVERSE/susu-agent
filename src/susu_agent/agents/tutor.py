@@ -4,6 +4,7 @@ from agents import Agent, RunContextWrapper
 
 from susu_agent.agents.instruction_loader import load_instruction
 from susu_agent.lesson_plan_loader import LessonPlanBundle
+from susu_agent.model_config import resolve_agent_model
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,4 +43,5 @@ def provide_tutor_instructions(
 tutor_agent = Agent[TutorRunContext](
     name="tutor",
     instructions=provide_tutor_instructions,
+    model=resolve_agent_model("TUTOR_MODEL"),
 )

@@ -18,6 +18,39 @@ from main import (
 from susu_agent.agents.teaching_state_updater import TeachingStateUpdate
 from susu_agent.lesson_plan_loader import load_lesson_plan
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
+from susu_agent.schemas.solution import Solution, SolutionStep, TutorQuestion
+
+
+def make_solution(problem_statement: str = "current question") -> Solution:
+    return Solution(
+        problem_statement=problem_statement,
+        problem_status="solvable",
+        goal="完成题目",
+        known_conditions=["已知条件"],
+        strategy_summary="先明确目标，再完成推导。",
+        steps=[
+            SolutionStep(
+                solution_step_id="step_0",
+                lesson_plan_step_id="S1",
+                title="明确目标",
+                goal="确认题目要求",
+                derivation="识别题目要求的数学对象。",
+                result="目标已经明确。",
+                tutor_questions=[
+                    TutorQuestion(
+                        question_id="question_0",
+                        question="题目要求我们得到什么？",
+                        teaching_goal="让学生明确交付目标",
+                        expected_answer="说明题目目标",
+                        answer_checkpoints=["正确说出目标"],
+                        hint_ladder=["先看题目最后一句"],
+                    )
+                ],
+            )
+        ],
+        final_answer="测试答案",
+        verification=["回到原题核对目标"],
+    )
 
 
 class StubSessionManager:
@@ -118,6 +151,7 @@ class MainRuntimeStateTests(unittest.TestCase):
 
         mock_run.assert_awaited_once()
         updater_payload = json.loads(mock_run.await_args.kwargs["input"])
+        self.assertIn("solution", updater_payload)
         self.assertIn("lesson_plan_instruction", updater_payload)
         self.assertEqual(
             updater_payload["lesson_plan_steps"][0],
@@ -137,9 +171,14 @@ class MainRuntimeStateTests(unittest.TestCase):
             "求函数的定义域",
         )
 
-    def test_context_builder_controls_the_tutor_input(self) -> None:
+    @patch("main.Runner.run", new_callable=AsyncMock)
+    def test_context_builder_controls_the_tutor_input(
+        self,
+        mock_run: AsyncMock,
+    ) -> None:
         session_manager = ContextSessionManager()
         repository = StatefulTeachingStateRepository()
+        mock_run.return_value = SimpleNamespace(final_output=make_solution())
 
         import asyncio
 
@@ -154,10 +193,31 @@ class MainRuntimeStateTests(unittest.TestCase):
         self.assertIn("一、总纲：解题是在结构中逐步消除不确定性", context_input)
         self.assertNotIn("F7：原题检验与完整表达", context_input)
         self.assertIn('"lesson_plan": {', context_input)
+        self.assertIn('"solution": {', context_input)
+        self.assertIn('"solution_step_id": "step_0"', context_input)
         self.assertIn('"content_digest":', context_input)
         self.assertIn('"current_user_message": "current question"', context_input)
         self.assertIn("previous question", context_input)
         self.assertNotIn("tool message", context_input)
+        self.assertEqual(
+            tutor_turn.solution.problem_statement,
+            "current question",
+        )
+        self.assertEqual(
+            repository.state["teaching_progress"]["current_solution_step_id"],
+            "step_0",
+        )
+        self.assertEqual(
+            repository.state["teaching_progress"][
+                "current_solution_question_id"
+            ],
+            "question_0",
+        )
+
+        asyncio.run(
+            build_tutor_input("student follow-up", session_manager, repository)
+        )
+        mock_run.assert_awaited_once()
 
     def test_raw_conversation_is_persisted_after_the_model_reply(self) -> None:
         session_manager = ContextSessionManager()

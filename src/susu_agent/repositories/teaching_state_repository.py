@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from susu_agent.lesson_plan_loader import LessonPlanBundle, LessonPlanLoader
+from susu_agent.schemas.solution import Solution
 from susu_agent.schemas.teaching_state import validate_teaching_state
 
 
@@ -121,16 +122,22 @@ class TeachingStateRepository:
         ).load(subject)
         return {
             "session_id": session_id,
-            "schema_version": 3,
+            "schema_version": 4,
             "lesson_plan": TeachingStateRepository._lesson_plan_metadata(
                 selected_lesson_plan
             ),
+            "solution": None,
             "open_question_history": [],
             "teaching_progress": {
                 "stage": "understand_task",
                 "current_lesson_plan_step_id": None,
                 "completed_lesson_plan_step_ids": [],
                 "lesson_plan_step_summary": "",
+                "current_solution_step_id": None,
+                "completed_solution_step_ids": [],
+                "solution_step_summary": "",
+                "current_solution_question_id": None,
+                "completed_solution_question_ids": [],
                 "hints_num": 0,
                 "confirmed_steps": [],
                 "next_teacher_action": "ask_question",
@@ -156,7 +163,9 @@ class TeachingStateRepository:
             state = self._upgrade_v1_state(state, lesson_plan)
         elif schema_version == 2:
             state = self._upgrade_v2_state(state, lesson_plan)
-        elif schema_version != 3:
+        elif schema_version == 3:
+            state = self._upgrade_v3_state(state)
+        elif schema_version != 4:
             raise ValueError(
                 f"Unsupported teaching state schema_version: {schema_version!r}"
             )
@@ -193,9 +202,11 @@ class TeachingStateRepository:
                 "understand_task",
             )
             question.setdefault("lesson_plan_step_id", None)
+            question.setdefault("solution_step_id", None)
 
         state["lesson_plan"] = self._lesson_plan_metadata(lesson_plan)
-        state["schema_version"] = 3
+        self._add_solution_fields(state)
+        state["schema_version"] = 4
         return state
 
     def _upgrade_v2_state(
@@ -226,10 +237,31 @@ class TeachingStateRepository:
                 legacy_step,
                 lesson_plan,
             )
+            question.setdefault("solution_step_id", None)
 
         state["lesson_plan"] = self._lesson_plan_metadata(lesson_plan)
-        state["schema_version"] = 3
+        self._add_solution_fields(state)
+        state["schema_version"] = 4
         return state
+
+    def _upgrade_v3_state(self, state: dict[str, Any]) -> dict[str, Any]:
+        """为既有教案状态加入题目级 Solution 和执行游标。"""
+        self._add_solution_fields(state)
+        state["schema_version"] = 4
+        return state
+
+    @staticmethod
+    def _add_solution_fields(state: dict[str, Any]) -> None:
+        state.setdefault("solution", None)
+        progress = state.setdefault("teaching_progress", {})
+        progress.setdefault("current_solution_step_id", None)
+        progress.setdefault("completed_solution_step_ids", [])
+        progress.setdefault("solution_step_summary", "")
+        progress.setdefault("current_solution_question_id", None)
+        progress.setdefault("completed_solution_question_ids", [])
+        for question in state.setdefault("open_question_history", []):
+            question.setdefault("solution_step_id", None)
+            question.setdefault("solution_question_id", None)
 
     @staticmethod
     def _resolve_legacy_step_id(
@@ -325,4 +357,81 @@ class TeachingStateRepository:
             raise ValueError(
                 f"Teaching state references unknown lesson plan steps: "
                 f"{unknown_step_ids!r}."
+            )
+
+        solution_data = state.get("solution")
+        if solution_data is None:
+            solution_step_ids: set[str] = set()
+            solution_question_ids: set[str] = set()
+        else:
+            solution = Solution.model_validate(solution_data)
+            if solution.subject != lesson_plan.subject:
+                raise ValueError("Solution subject does not match the lesson plan.")
+            if (
+                state.get("original_problem", {}).get("problem_statement")
+                != solution.problem_statement
+            ):
+                raise ValueError("Solution does not match the original problem.")
+            unknown_solution_lesson_steps = sorted(
+                {
+                    step.lesson_plan_step_id
+                    for step in solution.steps
+                    if step.lesson_plan_step_id not in allowed_step_ids
+                }
+            )
+            if unknown_solution_lesson_steps:
+                raise ValueError(
+                    "Solution references unknown lesson plan steps: "
+                    f"{unknown_solution_lesson_steps!r}."
+                )
+            solution_step_ids = {
+                step.solution_step_id for step in solution.steps
+            }
+            solution_question_ids = {
+                question.question_id
+                for step in solution.steps
+                for question in step.tutor_questions
+            }
+
+        referenced_solution_step_ids = [
+            progress.get("current_solution_step_id"),
+            *progress.get("completed_solution_step_ids", []),
+            *(
+                question.get("solution_step_id")
+                for question in state.get("open_question_history", [])
+            ),
+        ]
+        unknown_solution_step_ids = sorted(
+            {
+                step_id
+                for step_id in referenced_solution_step_ids
+                if step_id is not None and step_id not in solution_step_ids
+            }
+        )
+        if unknown_solution_step_ids:
+            raise ValueError(
+                "Teaching state references unknown Solution steps: "
+                f"{unknown_solution_step_ids!r}."
+            )
+
+        referenced_solution_question_ids = [
+            progress.get("current_solution_question_id"),
+            *progress.get("completed_solution_question_ids", []),
+            *(
+                question.get("solution_question_id")
+                for question in state.get("open_question_history", [])
+            ),
+        ]
+        unknown_solution_question_ids = sorted(
+            {
+                question_id
+                for question_id in referenced_solution_question_ids
+                if question_id is not None
+                and question_id not in solution_question_ids
+            }
+        )
+        if unknown_solution_question_ids:
+            raise ValueError(
+                "Teaching state references unknown Solution questions: "
+                f"{unknown_solution_question_ids!r}."
             )

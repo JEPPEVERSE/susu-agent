@@ -1,12 +1,19 @@
+from copy import deepcopy
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
 from susu_agent.schemas.format_checkers import ISO_DATETIME_FORMAT_CHECKER
+from susu_agent.schemas.solution import SOLUTION_SCHEMA
+
+
+_EMBEDDED_SOLUTION_SCHEMA = deepcopy(SOLUTION_SCHEMA)
+_SOLUTION_DEFINITIONS = _EMBEDDED_SOLUTION_SCHEMA.pop("$defs", {})
 
 
 TEACHING_STATE_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": _SOLUTION_DEFINITIONS,
     "type": "object",
     "properties": {
         "session_id": {
@@ -16,7 +23,7 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
 
         "schema_version": {
             "type": "integer",
-            "const": 3,
+            "const": 4,
         },
 
         "lesson_plan": {
@@ -101,6 +108,14 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
         },
 
+        "solution": {
+            "anyOf": [
+                _EMBEDDED_SOLUTION_SCHEMA,
+                {"type": "null"},
+            ],
+            "$comment": "由数学解题 Agent 生成的会话级内部解题路线。",
+        },
+
         "open_question_history": {
             "type": "array",
             "items": {
@@ -130,6 +145,14 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                     "lesson_plan_step_id": {
                         "type": ["string", "null"],
                         "maxLength": 200,
+                    },
+                    "solution_step_id": {
+                        "type": ["string", "null"],
+                        "maxLength": 100,
+                    },
+                    "solution_question_id": {
+                        "type": ["string", "null"],
+                        "maxLength": 100,
                     },
                     "status": {
                         "type": "string",
@@ -175,6 +198,8 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                     "question",
                     "stage",
                     "lesson_plan_step_id",
+                    "solution_step_id",
+                    "solution_question_id",
                     "status",
                     "asked_at",
                     "student_answer_summary",
@@ -216,6 +241,38 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                     "type": "string",
                     "maxLength": 1_000,
                 },
+                "current_solution_step_id": {
+                    "type": ["string", "null"],
+                    "maxLength": 100,
+                },
+                "completed_solution_step_ids": {
+                    "type": "array",
+                    "maxItems": 30,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string",
+                        "pattern": "^step_[0-9]+$",
+                        "maxLength": 100,
+                    },
+                },
+                "solution_step_summary": {
+                    "type": "string",
+                    "maxLength": 1_000,
+                },
+                "current_solution_question_id": {
+                    "type": ["string", "null"],
+                    "maxLength": 100,
+                },
+                "completed_solution_question_ids": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string",
+                        "pattern": "^question_[0-9]+$",
+                        "maxLength": 100,
+                    },
+                },
                 "hints_num": {
                     "type": "integer",
                     "minimum": 0,
@@ -253,6 +310,11 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                 "current_lesson_plan_step_id",
                 "completed_lesson_plan_step_ids",
                 "lesson_plan_step_summary",
+                "current_solution_step_id",
+                "completed_solution_step_ids",
+                "solution_step_summary",
+                "current_solution_question_id",
+                "completed_solution_question_ids",
                 "hints_num",
                 "confirmed_steps",
                 "next_teacher_action",
@@ -324,6 +386,7 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
         "session_id",
         "schema_version",
         "lesson_plan",
+        "solution",
         "open_question_history",
         "teaching_progress",
         "student_model",

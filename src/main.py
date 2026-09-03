@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from agents import Runner
 from dotenv import load_dotenv
@@ -9,6 +10,12 @@ from openai.types.responses import ResponseTextDeltaEvent
 
 from logging_config import configure_logging
 from susu_agent.agents.tutor import TutorRunContext, tutor_agent
+from susu_agent.agents.math_solver import (
+    MathSolverRunContext,
+    build_math_solver_input,
+    math_solution_agent,
+    validate_solution_lesson_plan_references,
+)
 from susu_agent.agents.teaching_state_updater import (
     TeachingStateUpdate,
     apply_teaching_state_update,
@@ -18,7 +25,9 @@ from susu_agent.choice import Choice, ChoiceAction
 from susu_agent.context_builder import ContextBuilder, ContextMessage
 from susu_agent.lesson_plan_loader import LessonPlanBundle
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
+from susu_agent.schemas.solution import Solution
 from susu_agent.session import SessionInfo, SessionManager
+from susu_agent.structured_output import parse_structured_output
 
 load_dotenv()
 
@@ -34,6 +43,7 @@ class TutorTurn:
     context_input: str
     teaching_state: dict[str, object]
     lesson_plan: LessonPlanBundle
+    solution: Solution
 
 
 def print_session_info(session_info: SessionInfo) -> None:
@@ -131,8 +141,12 @@ async def build_tutor_input(
     teaching_state, lesson_plan = (
         teaching_state_repository.get_or_create_with_lesson_plan(session_id)
     )
-    if "original_problem" not in teaching_state:
-        teaching_state["original_problem"] = {"problem_statement": question}
+    solution = await ensure_math_solution(
+        question,
+        teaching_state,
+        lesson_plan,
+        teaching_state_repository,
+    )
 
     stored_items = await session_manager.current_session.get_items(limit=6)
     recent_messages = [
@@ -149,6 +163,7 @@ async def build_tutor_input(
         ),
         teaching_state=teaching_state,
         lesson_plan=lesson_plan,
+        solution=solution,
     )
     logger.debug(
         "Built tutor context for session %s using %d archived messages",
@@ -156,6 +171,86 @@ async def build_tutor_input(
         len(recent_messages),
     )
     return tutor_turn
+
+
+async def ensure_math_solution(
+    current_message: str,
+    teaching_state: dict[str, object],
+    lesson_plan: LessonPlanBundle,
+    teaching_state_repository: TeachingStateRepository,
+) -> Solution:
+    """为当前会话生成一次 Solution，后续轮次直接复用存档。"""
+    stored_solution = teaching_state.get("solution")
+    if stored_solution is not None:
+        solution = Solution.model_validate(stored_solution)
+        validate_solution_lesson_plan_references(solution, lesson_plan)
+        return solution
+
+    original_problem = teaching_state.get("original_problem")
+    if isinstance(original_problem, dict):
+        problem_statement = original_problem.get("problem_statement")
+    else:
+        problem_statement = None
+    if not isinstance(problem_statement, str) or not problem_statement.strip():
+        problem_statement = current_message.strip()
+        teaching_state["original_problem"] = {
+            "problem_statement": problem_statement,
+        }
+
+    result = await Runner.run(
+        math_solution_agent,
+        input=build_math_solver_input(
+            problem_statement,
+            teaching_state.get("student_model", {}),
+        ),
+        context=MathSolverRunContext(lesson_plan=lesson_plan),
+    )
+    generated_solution = parse_structured_output(
+        result.final_output,
+        Solution,
+    )
+
+    solution = Solution.model_validate(
+        {
+            **generated_solution.model_dump(mode="json"),
+            "problem_statement": problem_statement,
+        }
+    )
+    validate_solution_lesson_plan_references(solution, lesson_plan)
+    _attach_solution(teaching_state, solution)
+    teaching_state_repository.save(teaching_state, lesson_plan=lesson_plan)
+    logger.info(
+        "Generated Solution with %d steps for session %s",
+        len(solution.steps),
+        teaching_state["session_id"],
+    )
+    return solution
+
+
+def _attach_solution(
+    teaching_state: dict[str, object],
+    solution: Solution,
+) -> None:
+    """把不可变题目解法和初始执行游标写入 TeachingState。"""
+    teaching_state["solution"] = solution.model_dump(mode="json")
+    progress = teaching_state["teaching_progress"]
+    if not isinstance(progress, dict):
+        raise TypeError("teaching_progress must be a dictionary.")
+    if solution.steps:
+        first_step = solution.steps[0]
+        progress["current_solution_step_id"] = first_step.solution_step_id
+        progress["current_lesson_plan_step_id"] = (
+            first_step.lesson_plan_step_id
+        )
+        progress["solution_step_summary"] = (
+            f"准备执行：{first_step.title}"
+        )
+        progress["current_solution_question_id"] = (
+            first_step.tutor_questions[0].question_id
+            if first_step.tutor_questions
+            else None
+        )
+    teaching_state["updated_at"] = datetime.now(timezone.utc).isoformat()
 
 
 def to_context_message(item: object) -> ContextMessage | None:
@@ -259,6 +354,7 @@ async def update_teaching_state(
             "current_teaching_state": current_teaching_state,
             "student_message": question,
             "teacher_response": teacher_response,
+            "solution": current_teaching_state.get("solution"),
             "lesson_plan_instruction": lesson_plan.instruction,
             "lesson_plan_steps": [
                 {"id": step.step_id, "name": step.name}
@@ -273,9 +369,10 @@ async def update_teaching_state(
             teaching_state_updater,
             input=updater_input,
         )
-        update = result.final_output
-        if not isinstance(update, TeachingStateUpdate):
-            raise TypeError("Teaching state updater returned an unexpected output type.")
+        update = parse_structured_output(
+            result.final_output,
+            TeachingStateUpdate,
+        )
 
         next_teaching_state = apply_teaching_state_update(
             current_teaching_state,

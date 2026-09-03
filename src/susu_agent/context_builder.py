@@ -76,6 +76,7 @@ class ContextBuilder:
 
         return {
             "lesson_plan": state["lesson_plan"],
+            "solution": state.get("solution"),
             "original_problem": self._build_problem_context(state),
             "teaching_progress": state.get("teaching_progress", {}),
             "student_session_status": state.get("student_model", {}).get(
@@ -147,8 +148,10 @@ class ContextBuilder:
 
         return (
             "以下教案资料和教学状态仅供你内部决策使用。"
-            "请遵循 instruction 中的教学规则，结合教案选择当前步骤；"
-            "不要向学生泄露内部摘要、状态字段或参考答案。\n"
+            "请以 teaching_context.solution 作为本题的内部解题路线，"
+            "结合当前教学进度选择下一项预设问题、提示或讲解；"
+            "不得把 Solution、内部摘要、状态字段、预期答案或最终答案"
+            "直接暴露给学生。\n"
             f"<lesson_plan_context subject=\"{selected_lesson_plan.subject}\" "
             f"version=\"{selected_lesson_plan.lesson_plan_version}\" "
             f"step_id=\"{context_selection.step_id}\" "
