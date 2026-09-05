@@ -39,8 +39,8 @@ logs/
 .vscode/
 .idea/
 
-# 本地临时前端（v0.1 测试工具）
-/local_web/
+# 本地临时前端（测试工具）
+test_web.txt
 
 # 系统文件
 .DS_Store

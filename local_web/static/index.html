@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>速速提分 · Agent v0.2</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script>
+      window.MathJax = {
+        tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]], displayMath: [["\\[", "\\]"], ["$$", "$$"]] },
+        options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] }
+      };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script defer src="/app.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">S</span>
+          <div><strong>速速提分</strong><small>Agent Architecture v0.2</small></div>
+        </div>
+
+        <button id="new-chat" class="primary-button">＋ 新对话</button>
+
+        <section class="side-section">
+          <div class="section-title">历史会话</div>
+          <div id="session-list" class="session-list"></div>
+        </section>
+
+        <section class="state-card">
+          <div class="section-title">v0.2 运行状态</div>
+          <dl>
+            <div><dt>Session</dt><dd id="session-id">—</dd></div>
+            <div><dt>教案版本</dt><dd id="plan-version">—</dd></div>
+            <div><dt>策略节点</dt><dd id="strategy-node">—</dd></div>
+            <div><dt>解题步骤</dt><dd id="current-step">—</dd></div>
+            <div><dt>教学阶段</dt><dd id="teaching-stage">—</dd></div>
+          </dl>
+          <div class="pipeline" aria-label="v0.2 artifact 状态">
+            <span id="solution-ready">求解</span>
+            <span id="verification-ready">验证</span>
+            <span id="strategy-ready">规划</span>
+            <span class="always-ready">执行</span>
+            <span id="summary-ready">总结</span>
+          </div>
+          <details>
+            <summary>Solution</summary>
+            <pre id="raw-solution"></pre>
+          </details>
+          <details>
+            <summary>VerificationReport</summary>
+            <pre id="raw-verification"></pre>
+          </details>
+          <details>
+            <summary>TeachingStrategy</summary>
+            <pre id="raw-strategy"></pre>
+          </details>
+          <details>
+            <summary>TeachingState</summary>
+            <pre id="raw-state"></pre>
+          </details>
+          <details>
+            <summary>StudentModel</summary>
+            <pre id="raw-student-model"></pre>
+          </details>
+        </section>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div><h1>v0.2 初步测试</h1><p>首轮预计算三层 · 后续单 Agent 执行 · 结构化状态可观测</p></div>
+          <span id="connection-status" class="status-pill">正在连接</span>
+        </header>
+
+        <section id="messages" class="messages" aria-live="polite">
+          <article class="welcome-card">
+            <span class="eyebrow">v0.2 LOCAL LAB</span>
+            <h2>从一道题开始</h2>
+            <p>输入一道新题后，系统会生成并验证解题图、建立教学策略，再进入每轮单 Agent 的教学执行。</p>
+          </article>
+        </section>
+
+        <form id="composer" class="composer">
+          <textarea id="question" rows="3" maxlength="8000" placeholder="粘贴数学题目或回答 Tutor 的问题……" required></textarea>
+          <div class="composer-footer">
+            <span>Enter 发送 · Shift + Enter 换行</span>
+            <button id="send-button" type="submit">发送</button>
+          </div>
+        </form>
+      </main>
+    </div>
+  </body>
+</html>

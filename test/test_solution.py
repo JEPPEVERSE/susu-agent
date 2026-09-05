@@ -136,14 +136,15 @@ class SolutionTests(unittest.TestCase):
         self.assertIn("S3: 确定动静关系与控制参数", instruction)
         self.assertIn("高中数学解题理论体系", instruction)
 
-    def test_solver_input_contains_student_model(self) -> None:
+    def test_solver_input_is_student_independent_in_v02(self) -> None:
         payload = build_math_solver_input(
             "测试题目",
             {"status": {"current_step_confidence": "low"}},
         )
 
         self.assertIn('"problem_statement": "测试题目"', payload)
-        self.assertIn('"current_step_confidence": "low"', payload)
+        self.assertNotIn('"current_step_confidence": "low"', payload)
+        self.assertIn('"revision_context": null', payload)
         self.assertIn(
             "# 数学解题规划 Agent Instruction",
             load_instruction("math_solver_instruction.md"),

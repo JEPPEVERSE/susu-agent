@@ -23,7 +23,7 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
 
         "schema_version": {
             "type": "integer",
-            "const": 4,
+            "const": 5,
         },
 
         "lesson_plan": {
@@ -114,6 +114,19 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                 {"type": "null"},
             ],
             "$comment": "由数学解题 Agent 生成的会话级内部解题路线。",
+        },
+        "verification_report": {
+            "type": ["object", "null"],
+            "$comment": "由 VerificationReport Pydantic 模型执行严格校验。",
+        },
+        "teaching_strategy": {
+            "type": ["object", "null"],
+            "$comment": "由 TeachingStrategy Pydantic 模型执行严格校验。",
+        },
+        "learning_evidence": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {"type": "object"},
         },
 
         "open_question_history": {
@@ -212,6 +225,10 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
         "teaching_progress": {
             "type": "object",
             "properties": {
+                "current_strategy_node_id": {
+                    "type": ["string", "null"],
+                    "maxLength": 100,
+                },
                 "stage": {
                     "type": "string",
                     "enum": [
@@ -306,6 +323,7 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                 "summary": {"type": "string", "maxLength": 1_000},
             },
             "required": [
+                "current_strategy_node_id",
                 "stage",
                 "current_lesson_plan_step_id",
                 "completed_lesson_plan_step_ids",
@@ -381,17 +399,50 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
             ],
             "additionalProperties": False,
         },
+        "v02_meta": {
+            "type": "object",
+            "properties": {
+                "architecture_version": {"type": "string", "const": "0.2"},
+                "solution_revision": {"type": "integer", "minimum": 0},
+                "summary_completed": {"type": "boolean"},
+            },
+            "required": ["architecture_version", "solution_revision", "summary_completed"],
+            "additionalProperties": False,
+        },
+        "personal_ai": {
+            "type": "object",
+            "properties": {
+                "principal_id": {"type": ["string", "null"], "maxLength": 200},
+                "consent_scope": {
+                    "type": "array",
+                    "uniqueItems": True,
+                    "items": {"type": "string", "maxLength": 100},
+                },
+                "data_classification": {
+                    "type": "string",
+                    "enum": ["internal", "personal", "sensitive"],
+                },
+                "encryption_ref": {"type": ["string", "null"], "maxLength": 500},
+            },
+            "required": ["principal_id", "consent_scope", "data_classification", "encryption_ref"],
+            "additionalProperties": False,
+        },
     },
     "required": [
         "session_id",
         "schema_version",
         "lesson_plan",
         "solution",
+        "verification_report",
+        "teaching_strategy",
+        "learning_evidence",
         "open_question_history",
         "teaching_progress",
         "student_model",
         "updated_at",
         "memory_meta",
+        "v02_meta",
+        "personal_ai",
     ],
     "additionalProperties": False,
 }
