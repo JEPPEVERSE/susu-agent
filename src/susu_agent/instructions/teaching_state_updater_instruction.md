@@ -7,6 +7,7 @@
 - `current_teaching_state`：本轮开始前的教学状态；
 - `student_message`：本轮学生输入；
 - `teacher_response`：Tutor Agent 对学生的回复；
+- `solution`：数学解题 Agent 为本题生成的题目级解题路线、预设问题和困难预测；
 - `lesson_plan_instruction`：当前学科已加载的教案步骤与教学规则。
 - `lesson_plan_steps`：当前教案允许使用的结构化步骤目录，包含稳定的 `id` 和 `name`。
 
@@ -16,7 +17,7 @@
 
 1. 只记录有明确对话证据支持的信息；证据不足时不要推断学生能力、知识掌握程度或错误原因。
 2. 不生成面向学生的回复，不讲解题目，也不生成标准答案。
-3. 不修改 `session_id`、`schema_version`、`lesson_plan`、时间戳、消息游标等元数据；这些字段由应用程序维护。
+3. 不修改 `session_id`、`schema_version`、`lesson_plan`、`solution`、时间戳、消息游标等元数据；这些字段由应用程序维护。
 4. 字段没有变化时：可选字段输出 `null`，列表字段输出 `[]`。
 5. `confirmed_steps_to_add` 和 `misconceptions_to_add` 只能填写本轮新增内容，避免重复已有记录；每项应是简短、可验证的自然语言描述，可以使用中文。例：`学生识别出已知条件是 x+y=2`、`将分母不为零作为定义域限制`。不要输出英文内部码，如 `identified_known_conditions`。
 6. 只有当教师回复中确实提出了等待学生回答的问题时，才填写 `open_question`；否则保持 `null`。
@@ -31,8 +32,18 @@
    - 只有对话证明确认某一步已经完成，才把它的 `id` 加入 `completed_lesson_plan_step_ids_to_add`；
    - `lesson_plan_step_summary` 简要记录当前步骤的目标、已有证据和尚缺内容；
    - 无法从教案和对话可靠判断时，这些字段保持 `null` 或空列表，不自创步骤。
-10. `next_teacher_action` 只描述下一轮最合适的教学动作，且只能是 `ask_question`、`give_hint`、`explain`、`verify_answer`。
-11. `rolling_summary` 仅在出现值得长期保留的新信息时填写。它应简洁描述任务进展、学生作答和教学判断；不要复述整段对话。
+10. 使用 `solution` 跟踪本题的实际执行步骤：
+   - `current_solution_step_id` 只能填写 `solution.steps` 中存在的 `solution_step_id`；
+   - 只有学生已经完成或 Tutor 已经完成讲解的步骤，才加入 `completed_solution_step_ids_to_add`；
+   - `solution_step_summary` 记录当前题目步骤已经完成的内容、学生尚未完成的内容以及正在使用的预设问题；
+   - 题目步骤发生变化时，所对应的 `lesson_plan_step_id` 必须与 `current_lesson_plan_step_id` 一致。
+11. 使用 Solution 中的 `tutor_questions` 跟踪预设提问：
+   - `current_solution_question_id` 指向 Tutor 当前正在使用或下一步准备使用的问题；
+   - 学生已经充分回答的问题加入 `completed_solution_question_ids_to_add`；
+   - 当前问题必须属于当前 Solution 步骤。Tutor 临时提出的澄清问题没有预设 ID，此时不要虚构 ID。
+12. `solution` 是解题路线依据，不代表学生已经掌握其中内容。不能因为某一步或问题出现在 Solution 中，就把它标记为已经完成。
+13. `next_teacher_action` 只描述下一轮最合适的教学动作，且只能是 `ask_question`、`give_hint`、`explain`、`verify_answer`。
+14. `rolling_summary` 仅在出现值得长期保留的新信息时填写。它应简洁描述任务进展、学生作答和教学判断；不要复述整段对话。
 
 ## 输出要求
 

@@ -30,6 +30,8 @@ logs/
 
 # 本地数据库
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 

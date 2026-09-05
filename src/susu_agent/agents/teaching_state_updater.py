@@ -6,7 +6,12 @@ from agents import Agent
 from pydantic import BaseModel, Field
 
 from susu_agent.agents.instruction_loader import load_instruction
+from susu_agent.model_config import (
+    resolve_agent_model,
+    supports_native_structured_output,
+)
 from susu_agent.schemas.teaching_state import validate_teaching_state
+from susu_agent.structured_output import build_json_output_instruction
 
 
 class TeachingStateUpdate(BaseModel):
@@ -31,6 +36,24 @@ class TeachingStateUpdate(BaseModel):
     lesson_plan_step_summary: str | None = Field(
         default=None,
         max_length=1_000,
+    )
+    current_solution_step_id: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+    completed_solution_step_ids_to_add: list[str] = Field(
+        default_factory=list,
+    )
+    solution_step_summary: str | None = Field(
+        default=None,
+        max_length=1_000,
+    )
+    current_solution_question_id: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+    completed_solution_question_ids_to_add: list[str] = Field(
+        default_factory=list,
     )
 
     confirmed_steps_to_add: list[str] = Field(default_factory=list)
@@ -62,10 +85,30 @@ class TeachingStateUpdate(BaseModel):
     rolling_summary: str | None = None
 
 
+TEACHING_STATE_UPDATER_MODEL = resolve_agent_model(
+    "TEACHING_STATE_UPDATER_MODEL"
+)
+TEACHING_STATE_UPDATER_USES_NATIVE_OUTPUT = (
+    supports_native_structured_output(TEACHING_STATE_UPDATER_MODEL)
+)
+TEACHING_STATE_UPDATER_INSTRUCTIONS = load_instruction(
+    "teaching_state_updater_instruction.md"
+)
+if not TEACHING_STATE_UPDATER_USES_NATIVE_OUTPUT:
+    TEACHING_STATE_UPDATER_INSTRUCTIONS += build_json_output_instruction(
+        TeachingStateUpdate
+    )
+
+
 teaching_state_updater = Agent(
     name="teaching_state_updater",
-    instructions=load_instruction("teaching_state_updater_instruction.md"),
-    output_type=TeachingStateUpdate,
+    instructions=TEACHING_STATE_UPDATER_INSTRUCTIONS,
+    model=TEACHING_STATE_UPDATER_MODEL,
+    output_type=(
+        TeachingStateUpdate
+        if TEACHING_STATE_UPDATER_USES_NATIVE_OUTPUT
+        else None
+    ),
 )
 
 
@@ -99,6 +142,71 @@ def apply_teaching_state_update(
             update.lesson_plan_step_summary
         )
 
+    solution_steps = {
+        step["solution_step_id"]: step
+        for step in (next_state.get("solution") or {}).get("steps", [])
+    }
+    solution_questions = {
+        question["question_id"]: (step, question)
+        for step in solution_steps.values()
+        for question in step.get("tutor_questions", [])
+    }
+    if update.current_solution_step_id is not None:
+        _require_known_solution_step_id(
+            update.current_solution_step_id,
+            set(solution_steps),
+        )
+        selected_solution_step = solution_steps[update.current_solution_step_id]
+        selected_lesson_plan_step_id = selected_solution_step[
+            "lesson_plan_step_id"
+        ]
+        if (
+            update.current_lesson_plan_step_id is not None
+            and update.current_lesson_plan_step_id
+            != selected_lesson_plan_step_id
+        ):
+            raise ValueError(
+                "Solution step and lesson plan step updates are inconsistent."
+            )
+        teaching_progress["current_solution_step_id"] = (
+            update.current_solution_step_id
+        )
+        teaching_progress["current_lesson_plan_step_id"] = (
+            selected_lesson_plan_step_id
+        )
+        if update.current_solution_question_id is None:
+            step_questions = selected_solution_step.get("tutor_questions", [])
+            teaching_progress["current_solution_question_id"] = (
+                step_questions[0]["question_id"] if step_questions else None
+            )
+    if update.current_solution_question_id is not None:
+        _require_known_solution_question_id(
+            update.current_solution_question_id,
+            set(solution_questions),
+        )
+        question_step, _ = solution_questions[
+            update.current_solution_question_id
+        ]
+        question_step_id = question_step["solution_step_id"]
+        if (
+            update.current_solution_step_id is not None
+            and update.current_solution_step_id != question_step_id
+        ):
+            raise ValueError(
+                "Solution question and Solution step updates are inconsistent."
+            )
+        teaching_progress["current_solution_question_id"] = (
+            update.current_solution_question_id
+        )
+        teaching_progress["current_solution_step_id"] = question_step_id
+        teaching_progress["current_lesson_plan_step_id"] = question_step[
+            "lesson_plan_step_id"
+        ]
+    if update.solution_step_summary is not None:
+        teaching_progress["solution_step_summary"] = (
+            update.solution_step_summary
+        )
+
     _extend_unique(
         teaching_progress.setdefault("completed_lesson_plan_step_ids", []),
         _validated_step_ids(
@@ -106,6 +214,22 @@ def apply_teaching_state_update(
             allowed_step_ids,
         ),
         maximum_size=50,
+    )
+    _extend_unique(
+        teaching_progress.setdefault("completed_solution_step_ids", []),
+        _validated_solution_step_ids(
+            update.completed_solution_step_ids_to_add,
+            set(solution_steps),
+        ),
+        maximum_size=30,
+    )
+    _extend_unique(
+        teaching_progress.setdefault("completed_solution_question_ids", []),
+        _validated_solution_question_ids(
+            update.completed_solution_question_ids_to_add,
+            set(solution_questions),
+        ),
+        maximum_size=100,
     )
 
     _extend_unique(
@@ -137,11 +261,20 @@ def apply_teaching_state_update(
             lesson_plan_step_id=teaching_progress.get(
                 "current_lesson_plan_step_id"
             ),
+            solution_step_id=teaching_progress.get(
+                "current_solution_step_id"
+            ),
+            solution_question_id=teaching_progress.get(
+                "current_solution_question_id"
+            ),
             now=now,
         )
 
     if update.rolling_summary is not None:
         next_state["memory_meta"]["rolling_summary"] = update.rolling_summary
+
+    if update.stage == "complete":
+        teaching_progress["current_solution_question_id"] = None
 
     next_state["updated_at"] = now
     validate_teaching_state(next_state)
@@ -180,12 +313,54 @@ def _validated_step_ids(
     return step_ids
 
 
+def _require_known_solution_step_id(
+    step_id: str,
+    allowed_step_ids: set[str],
+) -> None:
+    if step_id not in allowed_step_ids:
+        raise ValueError(
+            f"Unknown Solution step id {step_id!r}; "
+            f"expected one of {sorted(allowed_step_ids)!r}."
+        )
+
+
+def _validated_solution_step_ids(
+    step_ids: list[str],
+    allowed_step_ids: set[str],
+) -> list[str]:
+    for step_id in step_ids:
+        _require_known_solution_step_id(step_id, allowed_step_ids)
+    return step_ids
+
+
+def _require_known_solution_question_id(
+    question_id: str,
+    allowed_question_ids: set[str],
+) -> None:
+    if question_id not in allowed_question_ids:
+        raise ValueError(
+            f"Unknown Solution question id {question_id!r}; "
+            f"expected one of {sorted(allowed_question_ids)!r}."
+        )
+
+
+def _validated_solution_question_ids(
+    question_ids: list[str],
+    allowed_question_ids: set[str],
+) -> list[str]:
+    for question_id in question_ids:
+        _require_known_solution_question_id(question_id, allowed_question_ids)
+    return question_ids
+
+
 def _replace_open_question(
     question_history: list[dict[str, Any]],
     *,
     question: str,
     stage: str,
     lesson_plan_step_id: str | None,
+    solution_step_id: str | None,
+    solution_question_id: str | None,
     now: str,
 ) -> None:
     """关闭先前未答问题，并将本轮新问题写入历史。"""
@@ -213,6 +388,8 @@ def _replace_open_question(
             "question": question,
             "stage": stage,
             "lesson_plan_step_id": lesson_plan_step_id,
+            "solution_step_id": solution_step_id,
+            "solution_question_id": solution_question_id,
             "status": "open",
             "asked_at": now,
             "student_answer_summary": None,

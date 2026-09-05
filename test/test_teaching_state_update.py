@@ -9,6 +9,7 @@ from susu_agent.agents.teaching_state_updater import (
     apply_teaching_state_update,
 )
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
+from susu_agent.schemas.solution import Solution, SolutionStep, TutorQuestion
 
 
 class TeachingStateUpdateTests(unittest.TestCase):
@@ -113,6 +114,78 @@ class TeachingStateUpdateTests(unittest.TestCase):
                 TeachingStateUpdate(
                     current_lesson_plan_step_id="S99",
                 ),
+            )
+
+    def test_solution_step_progress_and_question_are_linked(self) -> None:
+        solution = Solution(
+            problem_statement="测试题",
+            problem_status="solvable",
+            goal="完成测试题",
+            strategy_summary="执行两个题目步骤。",
+            steps=[
+                SolutionStep(
+                    solution_step_id="step_0",
+                    lesson_plan_step_id="S1",
+                    title="明确目标",
+                    goal="明确目标",
+                    derivation="目标已经明确。",
+                    result="完成目标识别。",
+                ),
+                SolutionStep(
+                    solution_step_id="step_1",
+                    lesson_plan_step_id="S3",
+                    title="分析动静",
+                    goal="分析变量关系",
+                    derivation="分析变量之间的约束。",
+                    result="得到控制参数。",
+                    tutor_questions=[
+                        TutorQuestion(
+                            question_id="question_1",
+                            question="哪些变量可以独立变化？",
+                            teaching_goal="识别控制参数",
+                            expected_answer="说明变量之间的依赖关系。",
+                        )
+                    ],
+                ),
+            ],
+            final_answer="测试结论",
+        )
+        self.state["original_problem"] = {"problem_statement": "测试题"}
+        self.state["solution"] = solution.model_dump(mode="json")
+
+        updated_state = apply_teaching_state_update(
+            self.state,
+            TeachingStateUpdate(
+                current_solution_step_id="step_1",
+                current_solution_question_id="question_1",
+                completed_solution_step_ids_to_add=["step_0"],
+                solution_step_summary="正在分析变量关系。",
+                open_question="哪些变量可以独立变化？",
+            ),
+        )
+
+        progress = updated_state["teaching_progress"]
+        self.assertEqual(progress["current_solution_step_id"], "step_1")
+        self.assertEqual(progress["current_lesson_plan_step_id"], "S3")
+        self.assertEqual(progress["completed_solution_step_ids"], ["step_0"])
+        self.assertEqual(
+            progress["current_solution_question_id"],
+            "question_1",
+        )
+        self.assertEqual(
+            updated_state["open_question_history"][0]["solution_step_id"],
+            "step_1",
+        )
+        self.assertEqual(
+            updated_state["open_question_history"][0]["solution_question_id"],
+            "question_1",
+        )
+
+    def test_unknown_solution_step_id_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            apply_teaching_state_update(
+                self.state,
+                TeachingStateUpdate(current_solution_step_id="step_99"),
             )
 
 
