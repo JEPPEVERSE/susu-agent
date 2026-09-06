@@ -1,6 +1,1 @@
-& C:\Users\DELL\.conda\envs\openai\python.exe local_web/server.py
-
-已知 \(\alpha,\beta\in\left(0,\frac{\pi}{4}\right)\)，且
-\[
-\sin(\alpha+\beta)=\frac{\cos\alpha}{\cos\beta},
-\]求 \(\cos\alpha\) 的最大值。
+& .\.venv\Scripts\python.exe .\local_web\server.py

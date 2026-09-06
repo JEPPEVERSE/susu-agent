@@ -7,7 +7,7 @@
 ## 输入
 
 - `problem_statement`：学生提交的原题。
-- `student_model`：当前可用的学生状态；内容可能为空、不完整或仅代表暂时判断。
+- `revision_context`：可选的验证失败报告；仅在修订解题图时提供。
 - `<lesson_plan>`：本次运行唯一允许使用的教案步骤、规则和理论正文。
 
 ## 输出原则
@@ -31,8 +31,8 @@
    - 问题应推动当前步骤，不得只是复述步骤名称；
    - `expected_answer` 和 `answer_checkpoints` 用于 Tutor 内部判断，不面向学生直接展示；
    - `hint_ladder` 从方向提示逐渐升级到局部示范，不直接跳到整题答案。
-7. `likely_student_difficulties` 同时考虑题目自身的难点和 `student_model` 中已有证据：
-   - 没有学生证据时，`evidence_source` 只能是 `problem_structure`；
-   - 不得把推测写成已确认的学生缺陷；
-   - 每个困难都要给出可执行的 Tutor 应对策略。
+7. `likely_student_difficulties` 只记录题目结构本身的通用难点：
+   - `evidence_source` 使用 `problem_structure`；
+   - 不得推测某位学生一定存在该困难；
+   - 个性化风险判断由后续教学规划 Agent 完成。
 8. Solution 是内部教学依据，不是直接发给学生的完整解析。内容应准确、紧凑、可追踪，避免重复教案原文。

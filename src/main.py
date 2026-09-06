@@ -25,6 +25,8 @@ from susu_agent.choice import Choice, ChoiceAction
 from susu_agent.context_builder import ContextBuilder, ContextMessage
 from susu_agent.lesson_plan_loader import LessonPlanBundle
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
+from susu_agent.repositories.student_model_repository import StudentModelRepository
+from susu_agent.orchestrator import V02Orchestrator
 from susu_agent.schemas.solution import Solution
 from susu_agent.session import SessionInfo, SessionManager
 from susu_agent.structured_output import parse_structured_output
@@ -388,7 +390,7 @@ async def update_teaching_state(
 
 
 async def main() -> None:
-    logger.info("Starting Tutor Agent for subject %s", course_subject)
+    logger.info("Starting susuAgent v0.2 for subject %s", course_subject)
     print("欢迎使用速速提分 Agent！")
     print(f"当前学科：{course_subject}。请输入学习问题。")
     print("/new：开启新对话；/history：查看并切换历史会话。")
@@ -398,6 +400,13 @@ async def main() -> None:
     teaching_state_repository = TeachingStateRepository(
         session_manager.db_path,
         default_subject=course_subject,
+    )
+    student_model_repository = StudentModelRepository(session_manager.db_path)
+    orchestrator = V02Orchestrator(
+        teaching_state_repository,
+        student_model_repository,
+        student_id=os.getenv("STUDENT_ID", "default_student"),
+        grade=os.getenv("COURSE_GRADE", "unknown"),
     )
     start_and_show_session(session_manager, teaching_state_repository)
 
@@ -426,40 +435,36 @@ async def main() -> None:
                 continue
 
             try:
-                tutor_turn = await build_tutor_input(
+                stored_items = await session_manager.current_session.get_items(limit=4)
+                recent_messages = [
+                    message
+                    for item in stored_items
+                    if (message := to_context_message(item)) is not None
+                ]
+                teacher_response, _ = await orchestrator.run_turn(
+                    session_manager.current_session_id,
                     choice.question,
-                    session_manager,
-                    teaching_state_repository,
+                    recent_messages,
                 )
-            except Exception:
-                logger.exception("Failed to build tutor context")
-                print("无法构建本轮教学上下文，请重试。")
-                continue
-
-            teacher_response = await stream_answer(
-                tutor_turn.context_input,
-                tutor_turn.lesson_plan,
-            )
-            if teacher_response is not None:
-                try:
-                    await persist_conversation_turn(
-                        choice.question,
-                        teacher_response,
-                        session_manager,
-                    )
-                except Exception:
-                    logger.exception("Failed to persist conversation turn")
-                await update_teaching_state(
+                print(teacher_response)
+                await persist_conversation_turn(
                     choice.question,
                     teacher_response,
-                    tutor_turn.teaching_state,
-                    tutor_turn.lesson_plan,
-                    teaching_state_repository,
+                    session_manager,
                 )
+                try:
+                    await orchestrator.summarize_if_needed(
+                        session_manager.current_session_id
+                    )
+                except Exception:
+                    logger.exception("Student model summarization failed")
                 print_current_runtime_state(
                     session_manager,
                     teaching_state_repository,
                 )
+            except Exception as error:
+                logger.exception("v0.2 teaching turn failed")
+                print(f"本轮教学执行失败（{type(error).__name__}）：{error}")
     finally:
         session_manager.close()
 

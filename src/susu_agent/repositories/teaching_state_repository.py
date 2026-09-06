@@ -10,6 +10,7 @@ from typing import Any
 from susu_agent.lesson_plan_loader import LessonPlanBundle, LessonPlanLoader
 from susu_agent.schemas.solution import Solution
 from susu_agent.schemas.teaching_state import validate_teaching_state
+from susu_agent.schemas.v02 import LearningEvidence, TeachingStrategy, VerificationReport
 
 
 logger = logging.getLogger(__name__)
@@ -122,13 +123,17 @@ class TeachingStateRepository:
         ).load(subject)
         return {
             "session_id": session_id,
-            "schema_version": 4,
+            "schema_version": 5,
             "lesson_plan": TeachingStateRepository._lesson_plan_metadata(
                 selected_lesson_plan
             ),
             "solution": None,
+            "verification_report": None,
+            "teaching_strategy": None,
+            "learning_evidence": [],
             "open_question_history": [],
             "teaching_progress": {
+                "current_strategy_node_id": None,
                 "stage": "understand_task",
                 "current_lesson_plan_step_id": None,
                 "completed_lesson_plan_step_ids": [],
@@ -149,6 +154,17 @@ class TeachingStateRepository:
                 "last_compacted_message_id": None,
                 "rolling_summary": "",
             },
+            "v02_meta": {
+                "architecture_version": "0.2",
+                "solution_revision": 0,
+                "summary_completed": False,
+            },
+            "personal_ai": {
+                "principal_id": None,
+                "consent_scope": [],
+                "data_classification": "personal",
+                "encryption_ref": None,
+            },
         }
 
     def _upgrade_and_sync(
@@ -165,7 +181,9 @@ class TeachingStateRepository:
             state = self._upgrade_v2_state(state, lesson_plan)
         elif schema_version == 3:
             state = self._upgrade_v3_state(state)
-        elif schema_version != 4:
+        elif schema_version == 4:
+            state = self._upgrade_v4_state(state)
+        elif schema_version != 5:
             raise ValueError(
                 f"Unsupported teaching state schema_version: {schema_version!r}"
             )
@@ -206,7 +224,8 @@ class TeachingStateRepository:
 
         state["lesson_plan"] = self._lesson_plan_metadata(lesson_plan)
         self._add_solution_fields(state)
-        state["schema_version"] = 4
+        self._add_v02_fields(state)
+        state["schema_version"] = 5
         return state
 
     def _upgrade_v2_state(
@@ -241,13 +260,21 @@ class TeachingStateRepository:
 
         state["lesson_plan"] = self._lesson_plan_metadata(lesson_plan)
         self._add_solution_fields(state)
-        state["schema_version"] = 4
+        self._add_v02_fields(state)
+        state["schema_version"] = 5
         return state
 
     def _upgrade_v3_state(self, state: dict[str, Any]) -> dict[str, Any]:
         """为既有教案状态加入题目级 Solution 和执行游标。"""
         self._add_solution_fields(state)
-        state["schema_version"] = 4
+        self._add_v02_fields(state)
+        state["schema_version"] = 5
+        return state
+
+    def _upgrade_v4_state(self, state: dict[str, Any]) -> dict[str, Any]:
+        """为 v0.1 状态加入 v0.2 artifact、执行游标与身份预留。"""
+        self._add_v02_fields(state)
+        state["schema_version"] = 5
         return state
 
     @staticmethod
@@ -262,6 +289,28 @@ class TeachingStateRepository:
         for question in state.setdefault("open_question_history", []):
             question.setdefault("solution_step_id", None)
             question.setdefault("solution_question_id", None)
+
+    @staticmethod
+    def _add_v02_fields(state: dict[str, Any]) -> None:
+        state.setdefault("verification_report", None)
+        state.setdefault("teaching_strategy", None)
+        state.setdefault("learning_evidence", [])
+        state.setdefault("teaching_progress", {}).setdefault(
+            "current_strategy_node_id", None
+        )
+        state.setdefault(
+            "v02_meta",
+            {"architecture_version": "0.2", "solution_revision": 0, "summary_completed": False},
+        )
+        state.setdefault(
+            "personal_ai",
+            {
+                "principal_id": None,
+                "consent_scope": [],
+                "data_classification": "personal",
+                "encryption_ref": None,
+            },
+        )
 
     @staticmethod
     def _resolve_legacy_step_id(
@@ -300,6 +349,7 @@ class TeachingStateRepository:
             state["lesson_plan"]["subject"]
         )
         self._validate_lesson_plan_references(state, selected_lesson_plan)
+        self._validate_v02_artifacts(state)
         validate_teaching_state(state)
 
         with closing(sqlite3.connect(self._db_path)) as connection:
@@ -326,6 +376,24 @@ class TeachingStateRepository:
                     ),
                 )
         logger.debug("Saved teaching state for session %s", state["session_id"])
+
+    @staticmethod
+    def _validate_v02_artifacts(state: dict[str, Any]) -> None:
+        report_data = state.get("verification_report")
+        if report_data is not None:
+            VerificationReport.model_validate(report_data)
+        strategy_data = state.get("teaching_strategy")
+        if strategy_data is not None:
+            strategy = TeachingStrategy.model_validate(strategy_data)
+            current_node_id = state.get("teaching_progress", {}).get(
+                "current_strategy_node_id"
+            )
+            if current_node_id is not None and current_node_id not in {
+                node.node_id for node in strategy.nodes
+            }:
+                raise ValueError("Teaching state references an unknown strategy node.")
+        for item in state.get("learning_evidence", []):
+            LearningEvidence.model_validate(item)
 
     @classmethod
     def _validate_lesson_plan_references(

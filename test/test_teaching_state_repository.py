@@ -19,7 +19,7 @@ class TeachingStateRepositoryTests(unittest.TestCase):
             stored_state = repository.get("problem_0")
 
         self.assertEqual(created_state["session_id"], "problem_0")
-        self.assertEqual(created_state["schema_version"], 4)
+        self.assertEqual(created_state["schema_version"], 5)
         self.assertIsNone(created_state["solution"])
         self.assertIsNone(
             created_state["teaching_progress"]["current_solution_step_id"]
@@ -79,7 +79,7 @@ class TeachingStateRepositoryTests(unittest.TestCase):
             migrated_state = repository.get("problem_1")
 
         self.assertIsNotNone(migrated_state)
-        self.assertEqual(migrated_state["schema_version"], 4)
+        self.assertEqual(migrated_state["schema_version"], 5)
         self.assertEqual(migrated_state["lesson_plan"]["subject"], "math")
         self.assertEqual(
             migrated_state["teaching_progress"]["stage"],
@@ -165,7 +165,7 @@ class TeachingStateRepositoryTests(unittest.TestCase):
 
             migrated_state = repository.get("problem_3")
 
-        self.assertEqual(migrated_state["schema_version"], 4)
+        self.assertEqual(migrated_state["schema_version"], 5)
         self.assertIsNone(migrated_state["solution"])
         self.assertEqual(
             migrated_state["teaching_progress"]["completed_solution_step_ids"],

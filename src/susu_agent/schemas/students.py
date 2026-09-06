@@ -21,6 +21,10 @@ STUDENT_MODEL_SCHEMA: dict[str, Any] = {
             "type": "integer",
             "minimum": 1,
         },
+        "model_version": {
+            "type": "integer",
+            "minimum": 1,
+        },
         "updated_at": {
             "type": "string",
             "format": "date-time",
@@ -198,6 +202,31 @@ STUDENT_MODEL_SCHEMA: dict[str, Any] = {
                 },
             },
             "additionalProperties": True,
+        },
+        "meta_knowledge_cards": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "card_id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$",
+                        "maxLength": 100,
+                    },
+                    "title": {"type": "string", "maxLength": 200},
+                    "content": {"type": "string", "maxLength": 1_000},
+                    "evidence_ids": {
+                        "type": "array",
+                        "maxItems": 30,
+                        "uniqueItems": True,
+                        "items": {"type": "string", "maxLength": 100},
+                    },
+                    "updated_at": {"type": "string", "format": "date-time"},
+                },
+                "required": ["card_id", "title", "content", "evidence_ids", "updated_at"],
+                "additionalProperties": False,
+            },
         },
         "prefered_style": {
             "type": "object",

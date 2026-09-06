@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,7 +73,7 @@ class SessionManager:
             return []
 
         try:
-            with sqlite3.connect(self._db_path) as connection:
+            with closing(sqlite3.connect(self._db_path)) as connection:
                 cursor = connection.execute(
                     """
                     SELECT session_id, created_at, updated_at

@@ -11,6 +11,7 @@ from susu_agent.model_config import (
     supports_native_structured_output,
 )
 from susu_agent.schemas.teaching_state import validate_teaching_state
+from susu_agent.schemas.v02 import TeachingExecution
 from susu_agent.structured_output import build_json_output_instruction
 
 
@@ -25,6 +26,8 @@ class TeachingStateUpdate(BaseModel):
         "verify",
         "complete",
     ] | None = None
+
+    current_strategy_node_id: str | None = Field(default=None, max_length=100)
 
     current_lesson_plan_step_id: str | None = Field(
         default=None,
@@ -123,6 +126,17 @@ def apply_teaching_state_update(
     student_status = next_state.setdefault("student_model", {}).setdefault(
         "status", {}
     )
+
+    if update.current_strategy_node_id is not None:
+        strategy = next_state.get("teaching_strategy") or {}
+        known_strategy_node_ids = {
+            node.get("node_id") for node in strategy.get("nodes", [])
+        }
+        if update.current_strategy_node_id not in known_strategy_node_ids:
+            raise ValueError("Unknown teaching strategy node id.")
+        teaching_progress["current_strategy_node_id"] = (
+            update.current_strategy_node_id
+        )
 
     if update.stage is not None:
         teaching_progress["stage"] = update.stage
@@ -277,6 +291,27 @@ def apply_teaching_state_update(
         teaching_progress["current_solution_question_id"] = None
 
     next_state["updated_at"] = now
+    validate_teaching_state(next_state)
+    return next_state
+
+
+def apply_teaching_execution(
+    current_teaching_state: Mapping[str, Any],
+    execution: TeachingExecution,
+) -> dict[str, Any]:
+    """把一次执行 Agent 结果转换成受 Schema 约束的状态增量并合并。"""
+    delta = execution.state_delta
+    update = TeachingStateUpdate(**delta.model_dump(mode="python"))
+    next_state = apply_teaching_state_update(current_teaching_state, update)
+    evidence = next_state.setdefault("learning_evidence", [])
+    known_ids = {item.get("evidence_id") for item in evidence}
+    for item in execution.learning_evidence:
+        if item.evidence_id not in known_ids and len(evidence) < 200:
+            evidence.append(item.model_dump(mode="json"))
+            known_ids.add(item.evidence_id)
+    if execution.control_signal == "complete":
+        next_state["teaching_progress"]["stage"] = "complete"
+    next_state["updated_at"] = datetime.now(timezone.utc).isoformat()
     validate_teaching_state(next_state)
     return next_state
 

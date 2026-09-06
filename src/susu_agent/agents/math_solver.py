@@ -61,13 +61,18 @@ def provide_math_solver_instructions(
 
 def build_math_solver_input(
     problem_statement: str,
-    student_model: Mapping[str, Any],
+    student_model: Mapping[str, Any] | None = None,
+    revision_context: Mapping[str, Any] | None = None,
 ) -> str:
-    """构造只含题目与学生状态的结构化输入。"""
+    """构造学生无关的标准求解输入。
+
+    ``student_model`` 仅为兼容 v0.1 调用方保留，不进入求解上下文。
+    个性化判断由 v0.2 教学规划层负责。
+    """
     return json.dumps(
         {
             "problem_statement": problem_statement,
-            "student_model": student_model,
+            "revision_context": revision_context,
         },
         ensure_ascii=False,
         indent=2,
@@ -125,7 +130,7 @@ def validate_solution_lesson_plan_references(
 
 
 math_solution_agent = Agent[MathSolverRunContext](
-    name="math_solution_planner",
+    name="solution_agent",
     instructions=provide_math_solver_instructions,
     model=MATH_SOLUTION_MODEL,
     output_type=Solution if MATH_SOLUTION_USES_NATIVE_OUTPUT else None,
