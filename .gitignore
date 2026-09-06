@@ -41,6 +41,7 @@ logs/
 
 # 本地临时前端（测试工具）
 test_web.txt
+test_questions.md
 
 # 系统文件
 .DS_Store
