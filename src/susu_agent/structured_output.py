@@ -69,6 +69,7 @@ def parse_structured_output(
         except (json.JSONDecodeError, ValueError, TypeError) as error:
             parse_errors.append(error)
 
+    last_error = parse_errors[-1]
     raise ValueError(
-        f"Could not parse {model_type.__name__} from model JSON output."
-    ) from parse_errors[-1]
+        f"Could not parse {model_type.__name__} from model JSON output: {last_error}"
+    ) from last_error

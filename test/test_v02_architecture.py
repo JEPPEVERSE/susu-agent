@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from susu_agent.repositories.student_model_repository import StudentModelRepository
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
+from susu_agent.schemas.teaching_state import validate_teaching_state
 from susu_agent.schemas.v02 import (
     ConceptMasteryPatch,
     ExecutionStateDelta,
@@ -33,7 +34,7 @@ class V02ArchitectureTests(unittest.TestCase):
                 issues=[
                     VerificationIssue(
                         issue_id="issue_0",
-                        issue_type="calculation_error",
+                        issue_type="step_reasoning_error",
                         severity="error",
                         evidence="2 + 2 was evaluated as 5.",
                         revision_instruction="Recalculate the step.",
@@ -86,7 +87,10 @@ class V02ArchitectureTests(unittest.TestCase):
         execution = TeachingExecution(
             response="请继续尝试。",
             assessment="partially_correct",
-            state_delta=ExecutionStateDelta(current_strategy_node_id="teach_0"),
+            state_delta=ExecutionStateDelta(
+                current_strategy_node_id="teach_0",
+                open_question="请继续尝试。",
+            ),
             learning_evidence=[
                 LearningEvidence(
                     evidence_id="problem_0_turn_0",
@@ -100,6 +104,29 @@ class V02ArchitectureTests(unittest.TestCase):
 
         updated = apply_teaching_execution(state, execution)
         self.assertEqual(updated["learning_evidence"][0]["concept_id"], "equation_setup")
+
+    def test_continuing_execution_requires_a_visible_open_question(self) -> None:
+        with self.assertRaises(ValidationError):
+            TeachingExecution(
+                response="请继续。",
+                assessment="not_applicable",
+                state_delta=ExecutionStateDelta(),
+            )
+
+    def test_registered_question_must_appear_in_response(self) -> None:
+        with self.assertRaises(ValidationError):
+            TeachingExecution(
+                response="请思考下一步。",
+                assessment="not_applicable",
+                state_delta=ExecutionStateDelta(open_question="题目要求什么？"),
+            )
+
+    def test_state_rejects_an_orphan_progress_question(self) -> None:
+        state = TeachingStateRepository.create_initial_state("problem_0")
+        state["teaching_progress"]["open_question"] = "没有历史记录的问题"
+
+        with self.assertRaisesRegex(ValueError, "requires an open history item"):
+            validate_teaching_state(state)
 
     def test_student_model_patch_uses_optimistic_version_and_evidence_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_directory:
@@ -131,4 +158,3 @@ class V02ArchitectureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

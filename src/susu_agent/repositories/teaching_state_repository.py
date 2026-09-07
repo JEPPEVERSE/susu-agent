@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sqlite3
 from copy import deepcopy
 from contextlib import closing
@@ -29,6 +30,14 @@ class TeachingStateRepository:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_table()
         logger.debug("Initialized teaching state repository at %s", self._db_path)
+
+    @property
+    def default_subject(self) -> str:
+        """返回由应用配置、在任何 Agent 运行前确定的学科路由。"""
+        return self._default_subject
+
+    def available_subjects(self) -> tuple[str, ...]:
+        return self._lesson_plan_loader.list_subjects()
 
     def _initialize_table(self) -> None:
         with closing(sqlite3.connect(self._db_path)) as connection:
@@ -123,7 +132,7 @@ class TeachingStateRepository:
         ).load(subject)
         return {
             "session_id": session_id,
-            "schema_version": 5,
+            "schema_version": 6,
             "lesson_plan": TeachingStateRepository._lesson_plan_metadata(
                 selected_lesson_plan
             ),
@@ -183,10 +192,13 @@ class TeachingStateRepository:
             state = self._upgrade_v3_state(state)
         elif schema_version == 4:
             state = self._upgrade_v4_state(state)
-        elif schema_version != 5:
+        elif schema_version not in {5, 6}:
             raise ValueError(
                 f"Unsupported teaching state schema_version: {schema_version!r}"
             )
+
+        if state.get("schema_version") == 5:
+            state = self._upgrade_v5_state(state)
 
         state["lesson_plan"] = self._lesson_plan_metadata(lesson_plan)
         return state
@@ -275,6 +287,80 @@ class TeachingStateRepository:
         """为 v0.1 状态加入 v0.2 artifact、执行游标与身份预留。"""
         self._add_v02_fields(state)
         state["schema_version"] = 5
+        return state
+
+    @staticmethod
+    def _upgrade_v5_state(state: dict[str, Any]) -> dict[str, Any]:
+        """迁移旧 Solution 字段，并把题目判定提升为代码拥有的状态。"""
+        original = state.get("original_problem")
+        solution = state.get("solution")
+        legacy_status = solution.get("problem_status") if isinstance(solution, dict) else None
+        status_mapping = {
+            "solvable": "solved",
+            "incomplete": "incomplete",
+            "ambiguous": "ambiguous",
+            "not_math": "unsupported",
+        }
+        if isinstance(original, dict):
+            original.setdefault(
+                "status",
+                status_mapping.get(legacy_status, "solved" if solution else "pending"),
+            )
+            original.setdefault(
+                "clarification_questions",
+                list(solution.get("clarification_questions", []))
+                if isinstance(solution, dict)
+                else [],
+            )
+            original.setdefault("clarification_context", [])
+
+        if isinstance(solution, dict) and solution.get("schema_version") == 1:
+            solution["schema_version"] = 2
+            for field in (
+                "subject",
+                "problem_statement",
+                "problem_status",
+                "clarification_questions",
+                "knowledge_points",
+                "likely_student_difficulties",
+            ):
+                solution.pop(field, None)
+            for step in solution.get("steps", []):
+                legacy_concepts = step.pop("knowledge_points", [])
+                step["concept_ids"] = [
+                    value
+                    for value in legacy_concepts
+                    if isinstance(value, str)
+                    and re.fullmatch(r"[a-z][a-z0-9_]*", value)
+                ]
+
+        # Verifier 与 TeachingPlanner 的职责及上下文契约均已改变。旧 artifact
+        # 即使标记为 passed 也不能作为新契约下的缓存命中；保留 Solution，下一轮
+        # 按 v0.2 schema 重新验证并规划。
+        has_cached_problem_artifacts = any(
+            value is not None
+            for value in (
+                solution,
+                state.get("verification_report"),
+                state.get("teaching_strategy"),
+            )
+        )
+        state["verification_report"] = None
+        state["teaching_strategy"] = None
+        if has_cached_problem_artifacts:
+            progress = state.setdefault("teaching_progress", {})
+            progress["stage"] = "understand_task"
+            progress["current_strategy_node_id"] = None
+            progress["current_solution_step_id"] = None
+            progress["current_solution_question_id"] = None
+            progress["open_question"] = None
+            state["open_question_history"] = [
+                question
+                for question in state.get("open_question_history", [])
+                if question.get("status") != "open"
+            ]
+
+        state["schema_version"] = 6
         return state
 
     @staticmethod
@@ -379,12 +465,61 @@ class TeachingStateRepository:
 
     @staticmethod
     def _validate_v02_artifacts(state: dict[str, Any]) -> None:
+        solution_data = state.get("solution")
+        solution = Solution.model_validate(solution_data) if solution_data is not None else None
+        problem_status = state.get("original_problem", {}).get("status")
+        if solution is not None and problem_status != "solved":
+            raise ValueError("A Solution artifact requires problem status 'solved'.")
+        if problem_status in {"incomplete", "ambiguous", "unsupported"} and any(
+            state.get(field) is not None
+            for field in ("solution", "verification_report", "teaching_strategy")
+        ):
+            raise ValueError("An unresolved problem cannot contain downstream artifacts.")
         report_data = state.get("verification_report")
         if report_data is not None:
-            VerificationReport.model_validate(report_data)
+            report = VerificationReport.model_validate(report_data)
+            if solution is None:
+                raise ValueError("Verification report requires a Solution artifact.")
+            known_steps = {step.solution_step_id for step in solution.steps}
+            if report.verdict == "passed" and set(report.checked_solution_step_ids) != known_steps:
+                raise ValueError("A passed verification must check every Solution step.")
         strategy_data = state.get("teaching_strategy")
         if strategy_data is not None:
+            if solution is None or report_data is None:
+                raise ValueError(
+                    "Teaching strategy requires Solution and VerificationReport artifacts."
+                )
             strategy = TeachingStrategy.model_validate(strategy_data)
+            if not strategy.nodes or strategy.initial_node_id is None:
+                raise ValueError("A runnable teaching strategy requires an initial node.")
+            known_steps = {step.solution_step_id for step in solution.steps}
+            question_owner = {
+                question.question_id: step.solution_step_id
+                for step in solution.steps
+                for question in step.tutor_questions
+            }
+            for node in strategy.nodes:
+                if node.solution_step_id is not None and node.solution_step_id not in known_steps:
+                    raise ValueError("Teaching strategy references an unknown Solution step.")
+                if node.solution_question_id is not None:
+                    if node.solution_question_id not in question_owner:
+                        raise ValueError(
+                            "Teaching strategy references an unknown Solution question."
+                        )
+                    if question_owner[node.solution_question_id] != node.solution_step_id:
+                        raise ValueError(
+                            "Teaching strategy binds a Solution question to the wrong step."
+                        )
+            unknown_difficulty_steps = {
+                step_id
+                for difficulty in strategy.anticipated_difficulties
+                for step_id in difficulty.related_solution_step_ids
+                if step_id not in known_steps
+            }
+            if unknown_difficulty_steps:
+                raise ValueError(
+                    "Teaching strategy difficulties reference unknown Solution steps."
+                )
             current_node_id = state.get("teaching_progress", {}).get(
                 "current_strategy_node_id"
             )
@@ -392,6 +527,22 @@ class TeachingStateRepository:
                 node.node_id for node in strategy.nodes
             }:
                 raise ValueError("Teaching state references an unknown strategy node.")
+            if current_node_id is not None:
+                current_node = next(
+                    node for node in strategy.nodes if node.node_id == current_node_id
+                )
+                progress = state.get("teaching_progress", {})
+                if progress.get("current_solution_step_id") != current_node.solution_step_id:
+                    raise ValueError(
+                        "Current strategy node and Solution step cursor are inconsistent."
+                    )
+                if (
+                    progress.get("current_solution_question_id")
+                    != current_node.solution_question_id
+                ):
+                    raise ValueError(
+                        "Current strategy node and Solution question cursor are inconsistent."
+                    )
         for item in state.get("learning_evidence", []):
             LearningEvidence.model_validate(item)
 
@@ -433,13 +584,6 @@ class TeachingStateRepository:
             solution_question_ids: set[str] = set()
         else:
             solution = Solution.model_validate(solution_data)
-            if solution.subject != lesson_plan.subject:
-                raise ValueError("Solution subject does not match the lesson plan.")
-            if (
-                state.get("original_problem", {}).get("problem_statement")
-                != solution.problem_statement
-            ):
-                raise ValueError("Solution does not match the original problem.")
             unknown_solution_lesson_steps = sorted(
                 {
                     step.lesson_plan_step_id

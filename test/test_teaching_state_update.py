@@ -7,9 +7,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from susu_agent.agents.teaching_state_updater import (
     TeachingStateUpdate,
     apply_teaching_state_update,
+    validate_teaching_execution_against_state,
 )
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
 from susu_agent.schemas.solution import Solution, SolutionStep, TutorQuestion
+from susu_agent.schemas.v02 import (
+    ExecutionStateDelta,
+    TeachingExecution,
+    TeachingStrategy,
+    TeachingStrategyNode,
+)
 
 
 class TeachingStateUpdateTests(unittest.TestCase):
@@ -118,8 +125,6 @@ class TeachingStateUpdateTests(unittest.TestCase):
 
     def test_solution_step_progress_and_question_are_linked(self) -> None:
         solution = Solution(
-            problem_statement="测试题",
-            problem_status="solvable",
             goal="完成测试题",
             strategy_summary="执行两个题目步骤。",
             steps=[
@@ -150,7 +155,12 @@ class TeachingStateUpdateTests(unittest.TestCase):
             ],
             final_answer="测试结论",
         )
-        self.state["original_problem"] = {"problem_statement": "测试题"}
+        self.state["original_problem"] = {
+            "problem_statement": "测试题",
+            "status": "solved",
+            "clarification_questions": [],
+            "clarification_context": [],
+        }
         self.state["solution"] = solution.model_dump(mode="json")
 
         updated_state = apply_teaching_state_update(
@@ -187,6 +197,46 @@ class TeachingStateUpdateTests(unittest.TestCase):
                 self.state,
                 TeachingStateUpdate(current_solution_step_id="step_99"),
             )
+
+    def test_answer_cannot_be_attached_without_an_open_question(self) -> None:
+        execution = TeachingExecution(
+            response="题目要求什么？",
+            assessment="correct",
+            state_delta=ExecutionStateDelta(
+                answered_open_question_summary="学生给出了回答。",
+                answered_open_question_understanding="correct",
+                answered_open_question_assessment="回答正确。",
+                open_question="题目要求什么？",
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "no open question"):
+            validate_teaching_execution_against_state(self.state, execution)
+
+    def test_expression_agent_can_phrase_a_node_aligned_question(self) -> None:
+        self.state["teaching_strategy"] = TeachingStrategy(
+            strategy_id="strategy_0",
+            summary="test",
+            initial_node_id="teach_0",
+            nodes=[
+                TeachingStrategyNode(
+                    node_id="teach_0",
+                    goal="明确目标",
+                    teaching_action="ask_question",
+                    prompt_intent="询问题目目标",
+                    hint_ladder=["最后要求计算哪个量？"],
+                    disclosure_boundary="不透露答案",
+                )
+            ],
+        ).model_dump(mode="json")
+        self.state["teaching_progress"]["current_strategy_node_id"] = "teach_0"
+        execution = TeachingExecution(
+            response="余弦函数是递增还是递减？",
+            assessment="not_applicable",
+            state_delta=ExecutionStateDelta(open_question="余弦函数是递增还是递减？"),
+        )
+
+        validate_teaching_execution_against_state(self.state, execution)
 
 
 if __name__ == "__main__":

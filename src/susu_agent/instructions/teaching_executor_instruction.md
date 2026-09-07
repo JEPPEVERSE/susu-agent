@@ -12,3 +12,12 @@
 
 每轮原则上只提出一个主要问题。先确认学生回答中有效的部分，再聚焦唯一最关键的缺口。只输出 TeachingExecution。
 
+## 必须遵守的跨轮状态契约
+
+1. `control_signal="continue"` 时，本轮必须等待学生继续作答：`state_delta.open_question` 必须填写，而且该问题必须逐字出现在 `response` 中。
+2. 新问题必须服务于目标 TeachingStrategy 节点的 `prompt_intent`，并遵守其 `disclosure_boundary`；可以参考所绑定的 Solution `tutor_question` 与 `hint_ladder` 自然组织话术，但不得提前询问后续节点的问题或引入新的解题路线。
+3. 如果输入中的 `active_questions` 非空，本轮必须先评价最近的开放问题，并同时填写三个 `answered_open_question_*` 字段；`assessment` 必须与 `answered_open_question_understanding` 一致。
+4. 如果 `active_questions` 为空，不得填写任何 `answered_open_question_*` 字段，且 `assessment` 必须是 `not_applicable`。即使学生的话看起来像某个问题的答案，也不能把它挂到不存在的问题上；应重新提出当前策略节点允许的问题。
+5. 严格按照当前节点中与本轮 `assessment` 对应的 transition 更新 `current_strategy_node_id` 和 `control_signal`。终止分支使用 `complete`，重规划分支使用 `replan_required`。
+6. `control_signal="complete"` 时不得再填写 `open_question`，并将 `stage` 设为 `complete`。
+7. `control_signal="replan_required"` 时只结算当前开放问题和学习证据，不得基于即将废弃的旧策略提出新问题。

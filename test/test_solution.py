@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -18,22 +19,21 @@ from susu_agent.agents.math_solver import (
     provide_math_solver_instructions,
     validate_solution_lesson_plan_references,
 )
+from susu_agent.agents.solution_verifier import build_solution_verifier_input
 from susu_agent.lesson_plan_loader import load_lesson_plan
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
 from susu_agent.schemas.solution import (
     Solution,
     SolutionStep,
+    SolveOutcome,
     TutorQuestion,
 )
 
 
 def make_solution() -> Solution:
     return Solution(
-        problem_statement="已知 x+y=2，求 x²+y² 的最小值。",
-        problem_status="solvable",
         goal="求 x²+y² 的最小值",
         known_conditions=["x+y=2", "x、y 为实数"],
-        knowledge_points=["基本不等式"],
         strategy_summary="识别一个自由参数，再建立目标的下界。",
         steps=[
             SolutionStep(
@@ -43,7 +43,7 @@ def make_solution() -> Solution:
                 goal="判断 x 与 y 是否独立变化",
                 derivation="由 x+y=2 可知选定 x 后 y=2-x。",
                 result="问题只有一个连续自由参数。",
-                knowledge_points=["变量约束"],
+                concept_ids=["variable_constraint"],
                 tutor_questions=[
                     TutorQuestion(
                         question_id="question_0",
@@ -62,6 +62,19 @@ def make_solution() -> Solution:
 
 
 class SolutionTests(unittest.TestCase):
+    def test_solve_outcome_enforces_code_level_status_branches(self) -> None:
+        solved = SolveOutcome(status="solved", solution=make_solution())
+        self.assertIsNotNone(solved.solution)
+
+        with self.assertRaises(ValidationError):
+            SolveOutcome(status="incomplete")
+        with self.assertRaises(ValidationError):
+            SolveOutcome(
+                status="ambiguous",
+                solution=make_solution(),
+                clarification_questions=["请说明变量范围。"],
+            )
+
     def test_solution_rejects_unknown_fields(self) -> None:
         payload = make_solution().model_dump()
         payload["unexpected"] = True
@@ -95,7 +108,10 @@ class SolutionTests(unittest.TestCase):
             )
             solution = make_solution()
             state["original_problem"] = {
-                "problem_statement": solution.problem_statement
+                "problem_statement": "已知 x+y=2，求 x²+y² 的最小值。",
+                "status": "solved",
+                "clarification_questions": [],
+                "clarification_context": [],
             }
             state["solution"] = solution.model_dump(mode="json")
             state["teaching_progress"]["current_solution_step_id"] = "step_0"
@@ -128,7 +144,7 @@ class SolutionTests(unittest.TestCase):
         )
 
         if MATH_SOLUTION_USES_NATIVE_OUTPUT:
-            self.assertIs(math_solution_agent.output_type, Solution)
+            self.assertIs(math_solution_agent.output_type, SolveOutcome)
         else:
             self.assertIsNone(math_solution_agent.output_type)
             self.assertIn("## JSON 文本兼容模式", instruction)
@@ -144,11 +160,41 @@ class SolutionTests(unittest.TestCase):
 
         self.assertIn('"problem_statement": "测试题目"', payload)
         self.assertNotIn('"current_step_confidence": "low"', payload)
+        self.assertIn('"previous_solution": null', payload)
         self.assertIn('"revision_context": null', payload)
         self.assertIn(
             "# 数学解题规划 Agent Instruction",
             load_instruction("math_solver_instruction.md"),
         )
+
+    def test_solver_revision_input_contains_previous_solution(self) -> None:
+        previous_solution = make_solution().model_dump(mode="json")
+        payload = json.loads(
+            build_math_solver_input(
+                "测试题目",
+                revision_context={"summary": "修正第二步"},
+                previous_solution=previous_solution,
+            )
+        )
+
+        self.assertEqual(payload["previous_solution"], previous_solution)
+        self.assertEqual(payload["revision_context"]["summary"], "修正第二步")
+
+    def test_verifier_receives_only_its_solution_projection(self) -> None:
+        payload = json.loads(
+            build_solution_verifier_input(
+                "已知 x+y=2，求最小值。",
+                make_solution(),
+                load_lesson_plan("math"),
+            )
+        )
+
+        self.assertEqual(payload["origin_problem"], "已知 x+y=2，求最小值。")
+        self.assertIn("relevant_context_sections", payload["lesson_plan"])
+        serialized = json.dumps(payload, ensure_ascii=False)
+        self.assertNotIn("tutor_questions", serialized)
+        self.assertNotIn("concept_ids", serialized)
+        self.assertNotIn("likely_student_difficulties", serialized)
 
 
 if __name__ == "__main__":

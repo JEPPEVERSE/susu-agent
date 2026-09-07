@@ -54,6 +54,20 @@ def build_teaching_executor_input(
             (node for node in strategy.get("nodes", []) if node.get("node_id") == current_node_id),
             None,
         )
+    reachable_node_ids = {current_node_id}
+    if isinstance(current_node, Mapping):
+        reachable_node_ids.update(
+            transition.get("next_node_id")
+            for transition in current_node.get("transitions", [])
+            if transition.get("next_node_id") is not None
+        )
+    available_nodes = []
+    if isinstance(strategy, Mapping):
+        available_nodes = [
+            node
+            for node in strategy.get("nodes", [])
+            if node.get("node_id") in reachable_node_ids
+        ]
     solution = teaching_state.get("solution")
     current_step = None
     current_step_id = progress.get("current_solution_step_id") if isinstance(progress, Mapping) else None
@@ -62,11 +76,55 @@ def build_teaching_executor_input(
             (step for step in solution.get("steps", []) if step.get("solution_step_id") == current_step_id),
             None,
         )
+    if isinstance(current_step, Mapping):
+        current_step = {
+            key: current_step.get(key)
+            for key in (
+                "solution_step_id",
+                "lesson_plan_step_id",
+                "title",
+                "goal",
+                "derivation",
+                "result",
+                "concept_ids",
+            )
+        }
+    available_question_ids = {
+        node.get("solution_question_id")
+        for node in available_nodes
+        if node.get("solution_question_id") is not None
+    }
+    available_solution_questions = [
+        {
+            **question,
+            "solution_step_id": step.get("solution_step_id"),
+        }
+        for step in (solution.get("steps", []) if isinstance(solution, Mapping) else [])
+        for question in step.get("tutor_questions", [])
+        if question.get("question_id") in available_question_ids
+    ]
+    available_step_ids = {
+        node.get("solution_step_id")
+        for node in available_nodes
+        if node.get("solution_step_id") is not None
+    }
+    anticipated_difficulties = [
+        item
+        for item in (
+            strategy.get("anticipated_difficulties", [])
+            if isinstance(strategy, Mapping)
+            else []
+        )
+        if set(item.get("related_solution_step_ids", [])) & available_step_ids
+    ]
     return json.dumps(
         {
             "current_user_message": current_user_message,
             "current_teaching_node": current_node,
             "current_solution_step": current_step,
+            "available_strategy_nodes": available_nodes,
+            "available_solution_questions": available_solution_questions,
+            "anticipated_difficulties": anticipated_difficulties,
             "teaching_strategy_summary": strategy.get("summary") if isinstance(strategy, Mapping) else None,
             "completion_criteria": strategy.get("completion_criteria", []) if isinstance(strategy, Mapping) else [],
             "replan_triggers": strategy.get("replan_triggers", []) if isinstance(strategy, Mapping) else [],
