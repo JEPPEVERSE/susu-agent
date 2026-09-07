@@ -5,9 +5,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from susu_agent.sdk_compat import ensure_litellm_usage_compatibility
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
+
+# 必须在任何 Agent 发起模型调用前应用。该函数具有版本检测且可重复调用。
+ensure_litellm_usage_compatibility()
 
 DEFAULT_AGENT_MODEL = "gpt-5.4-mini"
 

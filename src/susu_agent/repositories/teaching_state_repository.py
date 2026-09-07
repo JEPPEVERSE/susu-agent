@@ -379,12 +379,47 @@ class TeachingStateRepository:
 
     @staticmethod
     def _validate_v02_artifacts(state: dict[str, Any]) -> None:
+        solution_data = state.get("solution")
+        solution = Solution.model_validate(solution_data) if solution_data is not None else None
         report_data = state.get("verification_report")
         if report_data is not None:
-            VerificationReport.model_validate(report_data)
+            report = VerificationReport.model_validate(report_data)
+            if solution is None:
+                raise ValueError("Verification report requires a Solution artifact.")
+            known_steps = {step.solution_step_id for step in solution.steps}
+            if report.verdict == "passed" and set(report.checked_solution_step_ids) != known_steps:
+                raise ValueError("A passed verification must check every Solution step.")
         strategy_data = state.get("teaching_strategy")
         if strategy_data is not None:
+            if solution is None or report_data is None:
+                raise ValueError(
+                    "Teaching strategy requires Solution and VerificationReport artifacts."
+                )
             strategy = TeachingStrategy.model_validate(strategy_data)
+            if not strategy.nodes or strategy.initial_node_id is None:
+                raise ValueError("A runnable teaching strategy requires an initial node.")
+            known_steps = {step.solution_step_id for step in solution.steps}
+            question_owner = {
+                question.question_id: step.solution_step_id
+                for step in solution.steps
+                for question in step.tutor_questions
+            }
+            for node in strategy.nodes:
+                if node.solution_step_id is not None and node.solution_step_id not in known_steps:
+                    raise ValueError("Teaching strategy references an unknown Solution step.")
+                if node.solution_question_id is not None:
+                    if node.solution_question_id not in question_owner:
+                        raise ValueError(
+                            "Teaching strategy references an unknown Solution question."
+                        )
+                    if question_owner[node.solution_question_id] != node.solution_step_id:
+                        raise ValueError(
+                            "Teaching strategy binds a Solution question to the wrong step."
+                        )
+                elif not node.hint_ladder:
+                    raise ValueError(
+                        "Every teaching strategy node needs a grounded question."
+                    )
             current_node_id = state.get("teaching_progress", {}).get(
                 "current_strategy_node_id"
             )
@@ -392,6 +427,22 @@ class TeachingStateRepository:
                 node.node_id for node in strategy.nodes
             }:
                 raise ValueError("Teaching state references an unknown strategy node.")
+            if current_node_id is not None:
+                current_node = next(
+                    node for node in strategy.nodes if node.node_id == current_node_id
+                )
+                progress = state.get("teaching_progress", {})
+                if progress.get("current_solution_step_id") != current_node.solution_step_id:
+                    raise ValueError(
+                        "Current strategy node and Solution step cursor are inconsistent."
+                    )
+                if (
+                    progress.get("current_solution_question_id")
+                    != current_node.solution_question_id
+                ):
+                    raise ValueError(
+                        "Current strategy node and Solution question cursor are inconsistent."
+                    )
         for item in state.get("learning_evidence", []):
             LearningEvidence.model_validate(item)
 

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import tempfile
 import unittest
@@ -78,23 +79,37 @@ class V02OrchestratorTests(unittest.TestCase):
             ],
         )
         first_execution = TeachingExecution(
-            response="先说说题目要求我们得到什么？",
+            response="先说说：题目要求什么？",
             assessment="not_applicable",
-            state_delta=ExecutionStateDelta(open_question="题目要求我们得到什么？"),
+            state_delta=ExecutionStateDelta(open_question="题目要求什么？"),
         )
         second_execution = TeachingExecution(
-            response="对，目标已经找到了。",
+            response="对，目标已经找到了。题目要求什么？",
             assessment="correct",
             state_delta=ExecutionStateDelta(
                 answered_open_question_summary="学生说出了目标。",
                 answered_open_question_understanding="correct",
                 answered_open_question_assessment="回答覆盖目标检查点。",
+                open_question="题目要求什么？",
             ),
+        )
+        invalid_first_execution = json.dumps(
+            {
+                "schema_version": 1,
+                "response": "先想一想余弦函数是递增还是递减的？",
+                "assessment": "not_applicable",
+                "state_delta": {},
+                "learning_evidence": [],
+                "control_signal": "continue",
+                "control_reason": "",
+            },
+            ensure_ascii=False,
         )
         mock_run.side_effect = [
             result(solution),
             result(verification),
             result(strategy),
+            result(invalid_first_execution),
             result(first_execution),
             result(second_execution),
         ]
@@ -117,7 +132,7 @@ class V02OrchestratorTests(unittest.TestCase):
 
         self.assertEqual(first_response, first_execution.response)
         self.assertEqual(second_response, second_execution.response)
-        self.assertEqual(mock_run.await_count, 5)
+        self.assertEqual(mock_run.await_count, 6)
         self.assertEqual(
             [call.args[0].name for call in mock_run.await_args_list],
             [
@@ -126,10 +141,12 @@ class V02OrchestratorTests(unittest.TestCase):
                 "teaching_planner",
                 "teaching_executor",
                 "teaching_executor",
+                "teaching_executor",
             ],
         )
+        repair_prompt = mock_run.await_args_list[4].kwargs["input"]
+        self.assertIn("上一次输出未通过运行时契约校验", repair_prompt)
 
 
 if __name__ == "__main__":
     unittest.main()
-

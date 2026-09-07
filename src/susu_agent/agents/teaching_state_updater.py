@@ -62,7 +62,7 @@ class TeachingStateUpdate(BaseModel):
     confirmed_steps_to_add: list[str] = Field(default_factory=list)
     misconceptions_to_add: list[str] = Field(default_factory=list)
 
-    open_question: str | None = None
+    open_question: str | None = Field(default=None, min_length=1, max_length=1_000)
     answered_open_question_summary: str | None = Field(
         default=None,
         max_length=500,
@@ -127,13 +127,15 @@ def apply_teaching_state_update(
         "status", {}
     )
 
+    selected_strategy_node: Mapping[str, Any] | None = None
     if update.current_strategy_node_id is not None:
         strategy = next_state.get("teaching_strategy") or {}
-        known_strategy_node_ids = {
-            node.get("node_id") for node in strategy.get("nodes", [])
+        strategy_nodes = {
+            node.get("node_id"): node for node in strategy.get("nodes", [])
         }
-        if update.current_strategy_node_id not in known_strategy_node_ids:
+        if update.current_strategy_node_id not in strategy_nodes:
             raise ValueError("Unknown teaching strategy node id.")
+        selected_strategy_node = strategy_nodes[update.current_strategy_node_id]
         teaching_progress["current_strategy_node_id"] = (
             update.current_strategy_node_id
         )
@@ -165,6 +167,42 @@ def apply_teaching_state_update(
         for step in solution_steps.values()
         for question in step.get("tutor_questions", [])
     }
+    if selected_strategy_node is not None:
+        strategy_step_id = selected_strategy_node.get("solution_step_id")
+        strategy_question_id = selected_strategy_node.get("solution_question_id")
+        if (
+            strategy_step_id is not None
+            and update.current_solution_step_id is not None
+            and update.current_solution_step_id != strategy_step_id
+        ):
+            raise ValueError("Teaching node and Solution step updates are inconsistent.")
+        if (
+            strategy_question_id is not None
+            and update.current_solution_question_id is not None
+            and update.current_solution_question_id != strategy_question_id
+        ):
+            raise ValueError("Teaching node and Solution question updates are inconsistent.")
+        teaching_progress["current_solution_step_id"] = strategy_step_id
+        teaching_progress["current_solution_question_id"] = strategy_question_id
+        if strategy_step_id is not None:
+            _require_known_solution_step_id(strategy_step_id, set(solution_steps))
+            teaching_progress["current_lesson_plan_step_id"] = solution_steps[
+                strategy_step_id
+            ]["lesson_plan_step_id"]
+        else:
+            teaching_progress["current_lesson_plan_step_id"] = None
+        if strategy_question_id is not None:
+            _require_known_solution_question_id(
+                strategy_question_id, set(solution_questions)
+            )
+            question_step, _ = solution_questions[strategy_question_id]
+            if (
+                strategy_step_id is not None
+                and question_step["solution_step_id"] != strategy_step_id
+            ):
+                raise ValueError(
+                    "Teaching node binds a Solution question to the wrong step."
+                )
     if update.current_solution_step_id is not None:
         _require_known_solution_step_id(
             update.current_solution_step_id,
@@ -314,6 +352,114 @@ def apply_teaching_execution(
     next_state["updated_at"] = datetime.now(timezone.utc).isoformat()
     validate_teaching_state(next_state)
     return next_state
+
+
+def validate_teaching_execution_against_state(
+    current_teaching_state: Mapping[str, Any],
+    execution: TeachingExecution,
+) -> None:
+    """在提交前校验执行 artifact 与当前策略、问题状态和转移图一致。"""
+    history = current_teaching_state.get("open_question_history", [])
+    open_questions = [item for item in history if item.get("status") == "open"]
+    delta = execution.state_delta
+    answer_fields = (
+        delta.answered_open_question_summary,
+        delta.answered_open_question_understanding,
+        delta.answered_open_question_assessment,
+    )
+    has_answer = all(value is not None for value in answer_fields)
+
+    if open_questions and not has_answer:
+        raise ValueError(
+            "The student message must assess and resolve the current open question."
+        )
+    if not open_questions and any(value is not None for value in answer_fields):
+        raise ValueError(
+            "Answer fields cannot be recorded because the state has no open question."
+        )
+    if not open_questions and execution.assessment != "not_applicable":
+        raise ValueError(
+            "A turn without an open question must use assessment='not_applicable'."
+        )
+
+    strategy = current_teaching_state.get("teaching_strategy") or {}
+    nodes = {
+        node.get("node_id"): node
+        for node in strategy.get("nodes", [])
+        if node.get("node_id") is not None
+    }
+    progress = current_teaching_state.get("teaching_progress", {})
+    source_node_id = progress.get("current_strategy_node_id")
+    source_node = nodes.get(source_node_id)
+    target_node_id = delta.current_strategy_node_id or source_node_id
+
+    if open_questions and source_node is not None:
+        transitions = [
+            item
+            for item in source_node.get("transitions", [])
+            if item.get("condition") == execution.assessment
+        ]
+        if len(transitions) == 1:
+            transition = transitions[0]
+            expected_node_id = transition.get("next_node_id")
+            action = transition.get("action")
+            if action == "replan" and execution.control_signal != "replan_required":
+                raise ValueError("The selected strategy transition requires replanning.")
+            if action == "complete" or (
+                action == "advance" and expected_node_id is None
+            ):
+                if execution.control_signal != "complete":
+                    raise ValueError("The terminal strategy transition must complete the turn.")
+            elif action != "replan":
+                if execution.control_signal != "continue":
+                    raise ValueError("A non-terminal strategy transition must continue.")
+                expected_target = expected_node_id or source_node_id
+                if target_node_id != expected_target:
+                    raise ValueError(
+                        f"Assessment {execution.assessment!r} must transition to "
+                        f"strategy node {expected_target!r}."
+                    )
+
+    if execution.control_signal != "continue":
+        return
+    target_node = nodes.get(target_node_id)
+    if target_node is None:
+        raise ValueError("A continuing turn must target a known teaching strategy node.")
+    if (
+        delta.current_solution_step_id is not None
+        and delta.current_solution_step_id != target_node.get("solution_step_id")
+    ):
+        raise ValueError("The execution's Solution step does not match its target node.")
+    if (
+        delta.current_solution_question_id is not None
+        and delta.current_solution_question_id
+        != target_node.get("solution_question_id")
+    ):
+        raise ValueError("The execution's Solution question does not match its target node.")
+
+    allowed_questions = {
+        item.strip()
+        for item in target_node.get("hint_ladder", [])
+        if isinstance(item, str) and item.strip()
+    }
+    solution_question_id = target_node.get("solution_question_id")
+    for step in (current_teaching_state.get("solution") or {}).get("steps", []):
+        for question in step.get("tutor_questions", []):
+            if question.get("question_id") == solution_question_id:
+                text = question.get("question")
+                if isinstance(text, str) and text.strip():
+                    allowed_questions.add(text.strip())
+
+    registered_question = delta.open_question.strip() if delta.open_question else ""
+    if not allowed_questions:
+        raise ValueError(
+            f"Teaching strategy node {target_node_id!r} has no grounded question text."
+        )
+    if registered_question not in allowed_questions:
+        raise ValueError(
+            "The open question must exactly match the target node's Solution question "
+            "or one of its planned hints."
+        )
 
 
 def _extend_unique(

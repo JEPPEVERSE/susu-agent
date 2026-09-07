@@ -32,7 +32,10 @@ from susu_agent.agents.teaching_planner import (
     build_teaching_planner_input,
     teaching_planner_agent,
 )
-from susu_agent.agents.teaching_state_updater import apply_teaching_execution
+from susu_agent.agents.teaching_state_updater import (
+    apply_teaching_execution,
+    validate_teaching_execution_against_state,
+)
 from susu_agent.context_builder import ContextMessage
 from susu_agent.lesson_plan_loader import LessonPlanBundle
 from susu_agent.profiles import default_teacher_model
@@ -77,6 +80,9 @@ class V02Orchestrator:
             if max_solution_revisions is None
             else max_solution_revisions
         )
+        self.max_execution_repairs = max(
+            0, int(os.getenv("MAX_EXECUTION_REPAIRS", "1"))
+        )
 
     async def run_turn(
         self,
@@ -104,6 +110,8 @@ class V02Orchestrator:
             recent_messages,
         )
         if execution.control_signal == "replan_required":
+            state = apply_teaching_execution(state, execution)
+            self.teaching_states.save(state, lesson_plan=lesson_plan)
             state = await self._plan(
                 state, lesson_plan, student_model, force=True
             )
@@ -232,6 +240,14 @@ class V02Orchestrator:
                 state["teaching_progress"]["current_solution_step_id"] = (
                     first.solution_step_id
                 )
+                selected_step = next(
+                    step
+                    for step in solution.steps
+                    if step.solution_step_id == first.solution_step_id
+                )
+                state["teaching_progress"]["current_lesson_plan_step_id"] = (
+                    selected_step.lesson_plan_step_id
+                )
             if first.solution_question_id is not None:
                 state["teaching_progress"]["current_solution_question_id"] = (
                     first.solution_question_id
@@ -248,18 +264,50 @@ class V02Orchestrator:
         student_model: Mapping[str, Any],
         recent_messages: Sequence[ContextMessage],
     ) -> TeachingExecution:
-        result = await Runner.run(
-            teaching_executor_agent,
-            input=build_teaching_executor_input(
-                current_user_message,
-                state,
-                student_model,
-                self.teacher_model,
-                recent_messages,
-            ),
-            context=TeachingExecutorRunContext(lesson_plan=lesson_plan),
+        executor_input = build_teaching_executor_input(
+            current_user_message,
+            state,
+            student_model,
+            self.teacher_model,
+            recent_messages,
         )
-        return parse_structured_output(result.final_output, TeachingExecution)
+        last_error: ValueError | None = None
+        for attempt in range(self.max_execution_repairs + 1):
+            repair_input = executor_input
+            if last_error is not None:
+                repair_input += (
+                    "\n\n上一次输出未通过运行时契约校验。请重新生成完整的 "
+                    "TeachingExecution，不要解释错误。校验错误："
+                    f"{last_error}"
+                )
+            result = await Runner.run(
+                teaching_executor_agent,
+                input=repair_input,
+                context=TeachingExecutorRunContext(lesson_plan=lesson_plan),
+            )
+            try:
+                execution = parse_structured_output(
+                    result.final_output, TeachingExecution
+                )
+                validate_teaching_execution_against_state(state, execution)
+                if attempt:
+                    logger.warning(
+                        "Teaching execution passed after %d repair attempt(s)",
+                        attempt,
+                    )
+                return execution
+            except (TypeError, ValueError) as error:
+                last_error = error
+                logger.warning(
+                    "Rejected teaching execution artifact (attempt %d/%d): %s",
+                    attempt + 1,
+                    self.max_execution_repairs + 1,
+                    error,
+                )
+        raise RuntimeError(
+            "Teaching executor could not produce a state-consistent turn after "
+            f"{self.max_execution_repairs + 1} attempt(s): {last_error}"
+        ) from last_error
 
     async def _summarize(
         self,
@@ -295,6 +343,10 @@ class V02Orchestrator:
             raise ValueError(
                 f"Verification references unknown Solution steps: {sorted(unknown)!r}."
             )
+        if report.verdict == "passed" and set(report.checked_solution_step_ids) != known:
+            raise ValueError(
+                "A passed verification must check every Solution step exactly once."
+            )
 
     @staticmethod
     def _validate_strategy_references(
@@ -322,4 +374,32 @@ class V02Orchestrator:
             raise ValueError(
                 "Teaching strategy references unknown Solution artifacts: "
                 f"steps={sorted(unknown_steps)!r}, questions={sorted(unknown_questions)!r}."
+            )
+        if not strategy.nodes or strategy.initial_node_id is None:
+            raise ValueError("A runnable teaching strategy requires an initial node.")
+        question_owner = {
+            question.question_id: step.solution_step_id
+            for step in solution.steps
+            for question in step.tutor_questions
+        }
+        mismatched_nodes = sorted(
+            node.node_id
+            for node in strategy.nodes
+            if node.solution_question_id is not None
+            and node.solution_step_id != question_owner[node.solution_question_id]
+        )
+        if mismatched_nodes:
+            raise ValueError(
+                "Teaching strategy nodes bind Solution questions to the wrong steps: "
+                f"{mismatched_nodes!r}."
+            )
+        ungrounded_nodes = sorted(
+            node.node_id
+            for node in strategy.nodes
+            if node.solution_question_id is None and not node.hint_ladder
+        )
+        if ungrounded_nodes:
+            raise ValueError(
+                "Every teaching strategy node needs a Solution question or planned hint: "
+                f"{ungrounded_nodes!r}."
             )

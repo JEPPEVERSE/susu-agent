@@ -454,5 +454,46 @@ TEACHING_STATE_VALIDATOR = Draft202012Validator(
 
 
 def validate_teaching_state(state: dict[str, Any]) -> None:
-    """校验教学状态，不符合 schema 时抛出 ValidationError。"""
+    """校验教学状态的 JSON 结构及跨字段运行时不变量。"""
     TEACHING_STATE_VALIDATOR.validate(state)
+    _validate_open_question_invariants(state)
+
+
+def _validate_open_question_invariants(state: dict[str, Any]) -> None:
+    history = state["open_question_history"]
+    question_ids = [item["question_id"] for item in history]
+    if len(question_ids) != len(set(question_ids)):
+        raise ValueError("Open-question history contains duplicate question ids.")
+
+    open_questions = [item for item in history if item["status"] == "open"]
+    if len(open_questions) > 1:
+        raise ValueError("Teaching state cannot contain more than one open question.")
+
+    progress_question = state["teaching_progress"].get("open_question")
+    if open_questions:
+        if progress_question != open_questions[0]["question"]:
+            raise ValueError(
+                "teaching_progress.open_question must match the open history item."
+            )
+    elif progress_question is not None:
+        raise ValueError(
+            "teaching_progress.open_question requires an open history item."
+        )
+
+    for item in history:
+        status = item["status"]
+        understanding = item["agent_assessment"]["understanding"]
+        if status == "open":
+            if (
+                item["student_answer_summary"] is not None
+                or understanding != "not_answered"
+                or item.get("resolved_at") is not None
+            ):
+                raise ValueError("An open question cannot contain resolved-answer data.")
+        elif status == "answered":
+            if (
+                item["student_answer_summary"] is None
+                or understanding == "not_answered"
+                or item.get("resolved_at") is None
+            ):
+                raise ValueError("An answered question requires answer and resolution data.")
