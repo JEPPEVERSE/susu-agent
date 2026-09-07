@@ -7,6 +7,7 @@ const elements = {
   sessionList: document.querySelector("#session-list"),
   sessionId: document.querySelector("#session-id"),
   planVersion: document.querySelector("#plan-version"),
+  problemStatus: document.querySelector("#problem-status"),
   strategyNode: document.querySelector("#strategy-node"),
   currentStep: document.querySelector("#current-step"),
   teachingStage: document.querySelector("#teaching-stage"),
@@ -188,6 +189,7 @@ function updateRuntime(payload, replaceMessages = false) {
   const runtime = payload.v02_runtime || {};
   elements.sessionId.textContent = payload.session_id;
   elements.planVersion.textContent = state.lesson_plan?.lesson_plan_version || "—";
+  elements.problemStatus.textContent = runtime.problem_status || "pending";
   elements.strategyNode.textContent = progress.current_strategy_node_id || "尚未规划";
   elements.currentStep.textContent = progress.current_solution_step_id || "尚未求解";
   elements.teachingStage.textContent = progress.stage || "—";

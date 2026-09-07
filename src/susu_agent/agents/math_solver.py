@@ -12,7 +12,7 @@ from susu_agent.model_config import (
     resolve_agent_model,
     supports_native_structured_output,
 )
-from susu_agent.schemas.solution import Solution
+from susu_agent.schemas.solution import Solution, SolveOutcome
 from susu_agent.structured_output import build_json_output_instruction
 
 
@@ -48,7 +48,7 @@ def compose_math_solver_instructions(lesson_plan: LessonPlanBundle) -> str:
         "</lesson_plan>"
     )
     if not MATH_SOLUTION_USES_NATIVE_OUTPUT:
-        instruction += build_json_output_instruction(Solution)
+        instruction += build_json_output_instruction(SolveOutcome)
     return instruction
 
 
@@ -63,6 +63,7 @@ def build_math_solver_input(
     problem_statement: str,
     student_model: Mapping[str, Any] | None = None,
     revision_context: Mapping[str, Any] | None = None,
+    previous_solution: Mapping[str, Any] | None = None,
 ) -> str:
     """构造学生无关的标准求解输入。
 
@@ -72,6 +73,7 @@ def build_math_solver_input(
     return json.dumps(
         {
             "problem_statement": problem_statement,
+            "previous_solution": previous_solution,
             "revision_context": revision_context,
         },
         ensure_ascii=False,
@@ -84,9 +86,6 @@ def validate_solution_lesson_plan_references(
     lesson_plan: LessonPlanBundle,
 ) -> None:
     """确保 Solution 只引用当前教案和自身存在的步骤。"""
-    if solution.subject != lesson_plan.subject:
-        raise ValueError("Solution subject does not match the lesson plan.")
-
     allowed_lesson_plan_steps = set(lesson_plan.step_ids)
     unknown_lesson_plan_steps = sorted(
         {
@@ -113,25 +112,9 @@ def validate_solution_lesson_plan_references(
     if len(question_ids) != len(set(question_ids)):
         raise ValueError("Tutor question ids must be unique within a Solution.")
 
-    known_solution_steps = set(solution_step_ids)
-    unknown_difficulty_steps = sorted(
-        {
-            step_id
-            for difficulty in solution.likely_student_difficulties
-            for step_id in difficulty.related_solution_step_ids
-            if step_id not in known_solution_steps
-        }
-    )
-    if unknown_difficulty_steps:
-        raise ValueError(
-            "Student difficulties reference unknown Solution steps: "
-            f"{unknown_difficulty_steps!r}."
-        )
-
-
 math_solution_agent = Agent[MathSolverRunContext](
     name="solution_agent",
     instructions=provide_math_solver_instructions,
     model=MATH_SOLUTION_MODEL,
-    output_type=Solution if MATH_SOLUTION_USES_NATIVE_OUTPUT else None,
+    output_type=SolveOutcome if MATH_SOLUTION_USES_NATIVE_OUTPUT else None,
 )

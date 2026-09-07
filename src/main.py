@@ -27,7 +27,7 @@ from susu_agent.lesson_plan_loader import LessonPlanBundle
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
 from susu_agent.repositories.student_model_repository import StudentModelRepository
 from susu_agent.orchestrator import V02Orchestrator
-from susu_agent.schemas.solution import Solution
+from susu_agent.schemas.solution import Solution, SolveOutcome
 from susu_agent.session import SessionInfo, SessionManager
 from susu_agent.structured_output import parse_structured_output
 
@@ -197,6 +197,9 @@ async def ensure_math_solution(
         problem_statement = current_message.strip()
         teaching_state["original_problem"] = {
             "problem_statement": problem_statement,
+            "status": "pending",
+            "clarification_questions": [],
+            "clarification_context": [],
         }
 
     result = await Runner.run(
@@ -207,17 +210,14 @@ async def ensure_math_solution(
         ),
         context=MathSolverRunContext(lesson_plan=lesson_plan),
     )
-    generated_solution = parse_structured_output(
+    outcome = parse_structured_output(
         result.final_output,
-        Solution,
+        SolveOutcome,
     )
-
-    solution = Solution.model_validate(
-        {
-            **generated_solution.model_dump(mode="json"),
-            "problem_statement": problem_statement,
-        }
-    )
+    if outcome.status != "solved" or outcome.solution is None:
+        questions = "；".join(outcome.clarification_questions)
+        raise ValueError(questions or outcome.reason or "题目目前无法求解。")
+    solution = outcome.solution
     validate_solution_lesson_plan_references(solution, lesson_plan)
     _attach_solution(teaching_state, solution)
     teaching_state_repository.save(teaching_state, lesson_plan=lesson_plan)
@@ -349,6 +349,9 @@ async def update_teaching_state(
     if "original_problem" not in current_teaching_state:
         current_teaching_state["original_problem"] = {
             "problem_statement": question,
+            "status": "pending",
+            "clarification_questions": [],
+            "clarification_context": [],
         }
 
     updater_input = json.dumps(

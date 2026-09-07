@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from susu_agent.orchestrator import V02Orchestrator
 from susu_agent.repositories.student_model_repository import StudentModelRepository
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
-from susu_agent.schemas.solution import Solution, SolutionStep, TutorQuestion
+from susu_agent.schemas.solution import Solution, SolutionStep, SolveOutcome, TutorQuestion
 from susu_agent.schemas.v02 import (
     ExecutionStateDelta,
     TeachingExecution,
@@ -28,12 +28,47 @@ def result(value: object) -> SimpleNamespace:
 
 class V02OrchestratorTests(unittest.TestCase):
     @patch("susu_agent.orchestrator.Runner.run", new_callable=AsyncMock)
+    def test_unresolved_problem_does_not_reach_verifier(
+        self, mock_run: AsyncMock
+    ) -> None:
+        mock_run.return_value = result(
+            SolveOutcome(
+                status="incomplete",
+                clarification_questions=["请补充函数的定义域。"],
+                reason="缺少定义域。",
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as temp_directory:
+            database = Path(temp_directory) / "runtime.db"
+            orchestrator = V02Orchestrator(
+                TeachingStateRepository(database),
+                StudentModelRepository(database),
+            )
+            response, state = asyncio.run(
+                orchestrator.run_turn("problem_0", "求函数最大值", [])
+            )
+
+        self.assertIn("请补充函数的定义域", response)
+        self.assertEqual(state["original_problem"]["status"], "incomplete")
+        self.assertIsNone(state["verification_report"])
+        self.assertEqual(mock_run.await_count, 1)
+        self.assertEqual(mock_run.await_args.args[0].name, "solution_agent")
+
+    def test_subject_route_requires_a_registered_lesson_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_directory:
+            database = Path(temp_directory) / "runtime.db"
+            with self.assertRaisesRegex(ValueError, "no registered lesson plan"):
+                V02Orchestrator(
+                    TeachingStateRepository(database, default_subject="physics"),
+                    StudentModelRepository(database),
+                )
+
+    @patch("susu_agent.orchestrator.Runner.run", new_callable=AsyncMock)
     def test_problem_artifacts_are_cached_after_the_first_turn(
         self, mock_run: AsyncMock
     ) -> None:
         solution = Solution(
-            problem_statement="测试题",
-            problem_status="solvable",
             goal="完成测试题",
             strategy_summary="先明确目标。",
             steps=[
@@ -105,8 +140,13 @@ class V02OrchestratorTests(unittest.TestCase):
             },
             ensure_ascii=False,
         )
+        invalid_solver_outcome = json.dumps(
+            {"schema_version": 1, "status": "solved", "solution": None},
+            ensure_ascii=False,
+        )
         mock_run.side_effect = [
-            result(solution),
+            result(invalid_solver_outcome),
+            result(SolveOutcome(status="solved", solution=solution)),
             result(verification),
             result(strategy),
             result(invalid_first_execution),
@@ -132,10 +172,11 @@ class V02OrchestratorTests(unittest.TestCase):
 
         self.assertEqual(first_response, first_execution.response)
         self.assertEqual(second_response, second_execution.response)
-        self.assertEqual(mock_run.await_count, 6)
+        self.assertEqual(mock_run.await_count, 7)
         self.assertEqual(
             [call.args[0].name for call in mock_run.await_args_list],
             [
+                "solution_agent",
                 "solution_agent",
                 "solution_verifier",
                 "teaching_planner",
@@ -144,8 +185,10 @@ class V02OrchestratorTests(unittest.TestCase):
                 "teaching_executor",
             ],
         )
-        repair_prompt = mock_run.await_args_list[4].kwargs["input"]
-        self.assertIn("上一次输出未通过运行时契约校验", repair_prompt)
+        schema_repair_prompt = mock_run.await_args_list[1].kwargs["input"]
+        self.assertIn("上一次输出未通过结构化 Schema 校验", schema_repair_prompt)
+        execution_repair_prompt = mock_run.await_args_list[5].kwargs["input"]
+        self.assertIn("上一次输出未通过运行时契约校验", execution_repair_prompt)
 
 
 if __name__ == "__main__":

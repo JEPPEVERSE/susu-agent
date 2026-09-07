@@ -51,13 +51,20 @@ def build_teaching_planner_input(
     teacher_model: Mapping[str, Any],
     teaching_state: Mapping[str, Any],
 ) -> str:
+    progress = teaching_state.get("teaching_progress", {})
     return json.dumps(
         {
             "verified_solution": solution.model_dump(mode="json"),
             "verification_report": verification.model_dump(mode="json"),
             "student_model": student_model,
             "teacher_model": teacher_model,
-            "initial_teaching_state": teaching_state,
+            "initial_teaching_state": {
+                "problem_status": teaching_state.get("original_problem", {}).get(
+                    "status"
+                ),
+                "teaching_progress": progress,
+                "learning_evidence": teaching_state.get("learning_evidence", []),
+            },
         },
         ensure_ascii=False,
         indent=2,
@@ -70,4 +77,3 @@ teaching_planner_agent = Agent[TeachingPlannerRunContext](
     model=MODEL,
     output_type=TeachingStrategy if USES_NATIVE_OUTPUT else None,
 )
-

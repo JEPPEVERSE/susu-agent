@@ -437,31 +437,6 @@ def validate_teaching_execution_against_state(
     ):
         raise ValueError("The execution's Solution question does not match its target node.")
 
-    allowed_questions = {
-        item.strip()
-        for item in target_node.get("hint_ladder", [])
-        if isinstance(item, str) and item.strip()
-    }
-    solution_question_id = target_node.get("solution_question_id")
-    for step in (current_teaching_state.get("solution") or {}).get("steps", []):
-        for question in step.get("tutor_questions", []):
-            if question.get("question_id") == solution_question_id:
-                text = question.get("question")
-                if isinstance(text, str) and text.strip():
-                    allowed_questions.add(text.strip())
-
-    registered_question = delta.open_question.strip() if delta.open_question else ""
-    if not allowed_questions:
-        raise ValueError(
-            f"Teaching strategy node {target_node_id!r} has no grounded question text."
-        )
-    if registered_question not in allowed_questions:
-        raise ValueError(
-            "The open question must exactly match the target node's Solution question "
-            "or one of its planned hints."
-        )
-
-
 def _extend_unique(
     existing_items: list[str],
     new_items: list[str],

@@ -1,6 +1,6 @@
-"""数学解题 Agent 的结构化输出模型。"""
+"""学科求解 Agent 的结构化输出模型。"""
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -11,15 +11,18 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+ConceptId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=100)]
+
+
 class TutorQuestion(StrictModel):
     """Tutor 在某个解题步骤中可以逐步提出的问题。"""
 
     question_id: str = Field(pattern=r"^question_[0-9]+$", max_length=100)
-    question: str = Field(min_length=1, max_length=1_000)
-    teaching_goal: str = Field(min_length=1, max_length=500)
-    expected_answer: str = Field(min_length=1, max_length=1_000)
-    answer_checkpoints: list[str] = Field(default_factory=list, max_length=10)
-    hint_ladder: list[str] = Field(default_factory=list, max_length=4)
+    question: str = Field(min_length=1, max_length=500)
+    teaching_goal: str = Field(min_length=1, max_length=300)
+    expected_answer: str = Field(min_length=1, max_length=600)
+    answer_checkpoints: list[str] = Field(default_factory=list, max_length=5)
+    hint_ladder: list[str] = Field(default_factory=list, max_length=3)
 
 
 class SolutionStep(StrictModel):
@@ -28,51 +31,28 @@ class SolutionStep(StrictModel):
     solution_step_id: str = Field(pattern=r"^step_[0-9]+$", max_length=100)
     lesson_plan_step_id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=200)
-    goal: str = Field(min_length=1, max_length=500)
+    goal: str = Field(min_length=1, max_length=300)
     derivation: str = Field(
         min_length=1,
-        max_length=4_000,
+        max_length=1_500,
         description="可核验的数学推导摘要，不记录模型的隐藏思维过程。",
     )
-    result: str = Field(min_length=1, max_length=2_000)
-    knowledge_points: list[str] = Field(default_factory=list, max_length=20)
-    tutor_questions: list[TutorQuestion] = Field(default_factory=list, max_length=10)
-
-
-class LikelyStudentDifficulty(StrictModel):
-    """结合题目结构和学生模型预判的潜在困难。"""
-
-    difficulty_id: str = Field(pattern=r"^difficulty_[0-9]+$", max_length=100)
-    related_solution_step_ids: list[str] = Field(
-        default_factory=list,
-        max_length=20,
-    )
-    description: str = Field(min_length=1, max_length=500)
-    evidence_source: Literal["student_model", "problem_structure", "both"]
-    likelihood: Literal["low", "medium", "high"]
-    tutor_strategy: str = Field(min_length=1, max_length=1_000)
+    result: str = Field(min_length=1, max_length=800)
+    concept_ids: list[ConceptId] = Field(default_factory=list, max_length=10)
+    tutor_questions: list[TutorQuestion] = Field(default_factory=list, max_length=4)
 
 
 class Solution(StrictModel):
     """一份题目级、教案驱动且供 Tutor 内部使用的解题计划。"""
 
-    schema_version: Literal[1] = 1
-    subject: Literal["math"] = "math"
-    problem_statement: str = Field(min_length=1, max_length=8_000)
-    problem_status: Literal["solvable", "incomplete", "ambiguous", "not_math"]
-    clarification_questions: list[str] = Field(default_factory=list, max_length=5)
-    goal: str = Field(min_length=1, max_length=1_000)
-    known_conditions: list[str] = Field(default_factory=list, max_length=50)
-    assumptions: list[str] = Field(default_factory=list, max_length=20)
-    knowledge_points: list[str] = Field(default_factory=list, max_length=50)
-    strategy_summary: str = Field(min_length=1, max_length=2_000)
-    steps: list[SolutionStep] = Field(default_factory=list, max_length=30)
-    likely_student_difficulties: list[LikelyStudentDifficulty] = Field(
-        default_factory=list,
-        max_length=30,
-    )
-    final_answer: str = Field(max_length=4_000)
-    verification: list[str] = Field(default_factory=list, max_length=20)
+    schema_version: Literal[2] = 2
+    goal: str = Field(min_length=1, max_length=500)
+    known_conditions: list[str] = Field(default_factory=list, max_length=20)
+    assumptions: list[str] = Field(default_factory=list, max_length=10)
+    strategy_summary: str = Field(min_length=1, max_length=800)
+    steps: list[SolutionStep] = Field(default_factory=list, max_length=12)
+    final_answer: str = Field(min_length=1, max_length=1_500)
+    verification: list[str] = Field(default_factory=list, max_length=5)
 
     @model_validator(mode="after")
     def validate_internal_references(self) -> Self:
@@ -89,27 +69,35 @@ class Solution(StrictModel):
         if len(question_ids) != len(set(question_ids)):
             raise ValueError("Tutor question ids must be unique.")
 
-        difficulty_ids = [
-            difficulty.difficulty_id
-            for difficulty in self.likely_student_difficulties
-        ]
-        if len(difficulty_ids) != len(set(difficulty_ids)):
-            raise ValueError("Student difficulty ids must be unique.")
+        return self
 
-        known_steps = set(step_ids)
-        unknown_steps = sorted(
-            {
-                step_id
-                for difficulty in self.likely_student_difficulties
-                for step_id in difficulty.related_solution_step_ids
-                if step_id not in known_steps
-            }
-        )
-        if unknown_steps:
-            raise ValueError(
-                "Student difficulties reference unknown Solution steps: "
-                f"{unknown_steps!r}."
-            )
+
+class SolveOutcome(StrictModel):
+    """求解后的代码级分支结果；只有 solved 分支可交给 verifier。"""
+
+    schema_version: Literal[1] = 1
+    status: Literal["solved", "incomplete", "ambiguous", "unsupported"]
+    solution: Solution | None = None
+    clarification_questions: list[str] = Field(default_factory=list, max_length=5)
+    reason: str = Field(default="", max_length=1_000)
+
+    @model_validator(mode="after")
+    def validate_status_payload(self) -> Self:
+        if self.status == "solved":
+            if self.solution is None:
+                raise ValueError("A solved outcome requires a Solution.")
+            if self.clarification_questions:
+                raise ValueError("A solved outcome cannot request clarification.")
+        else:
+            if self.solution is not None:
+                raise ValueError("An unresolved outcome cannot contain a Solution.")
+            if (
+                self.status in {"incomplete", "ambiguous"}
+                and not self.clarification_questions
+            ):
+                raise ValueError(
+                    "Incomplete and ambiguous outcomes require clarification questions."
+                )
         return self
 
 

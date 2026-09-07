@@ -125,8 +125,6 @@ class TeachingStateUpdateTests(unittest.TestCase):
 
     def test_solution_step_progress_and_question_are_linked(self) -> None:
         solution = Solution(
-            problem_statement="测试题",
-            problem_status="solvable",
             goal="完成测试题",
             strategy_summary="执行两个题目步骤。",
             steps=[
@@ -157,7 +155,12 @@ class TeachingStateUpdateTests(unittest.TestCase):
             ],
             final_answer="测试结论",
         )
-        self.state["original_problem"] = {"problem_statement": "测试题"}
+        self.state["original_problem"] = {
+            "problem_statement": "测试题",
+            "status": "solved",
+            "clarification_questions": [],
+            "clarification_context": [],
+        }
         self.state["solution"] = solution.model_dump(mode="json")
 
         updated_state = apply_teaching_state_update(
@@ -210,7 +213,7 @@ class TeachingStateUpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no open question"):
             validate_teaching_execution_against_state(self.state, execution)
 
-    def test_question_must_be_grounded_in_target_strategy_node(self) -> None:
+    def test_expression_agent_can_phrase_a_node_aligned_question(self) -> None:
         self.state["teaching_strategy"] = TeachingStrategy(
             strategy_id="strategy_0",
             summary="test",
@@ -233,8 +236,7 @@ class TeachingStateUpdateTests(unittest.TestCase):
             state_delta=ExecutionStateDelta(open_question="余弦函数是递增还是递减？"),
         )
 
-        with self.assertRaisesRegex(ValueError, "planned hints"):
-            validate_teaching_execution_against_state(self.state, execution)
+        validate_teaching_execution_against_state(self.state, execution)
 
 
 if __name__ == "__main__":

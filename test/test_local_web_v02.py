@@ -32,7 +32,7 @@ class LocalWebV02Tests(unittest.TestCase):
         self.assertFalse(payload["v02_runtime"]["solution_ready"])
         self.assertFalse(payload["v02_runtime"]["verification_ready"])
         self.assertFalse(payload["v02_runtime"]["strategy_ready"])
-        self.assertEqual(payload["teaching_state"]["schema_version"], 5)
+        self.assertEqual(payload["teaching_state"]["schema_version"], 6)
         self.assertEqual(payload["student_model"]["student_id"], "web_test_student")
 
 

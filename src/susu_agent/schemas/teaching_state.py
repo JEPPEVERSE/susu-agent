@@ -23,7 +23,7 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
 
         "schema_version": {
             "type": "integer",
-            "const": 5,
+            "const": 6,
         },
 
         "lesson_plan": {
@@ -103,8 +103,33 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                     },
                     "additionalProperties": False,
                 },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "solved",
+                        "incomplete",
+                        "ambiguous",
+                        "unsupported"
+                    ],
+                },
+                "clarification_questions": {
+                    "type": "array",
+                    "maxItems": 5,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
+                },
+                "clarification_context": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 2_000},
+                },
             },
-            "required": ["problem_statement"],
+            "required": [
+                "problem_statement",
+                "status",
+                "clarification_questions",
+                "clarification_context"
+            ],
             "additionalProperties": False,
         },
 

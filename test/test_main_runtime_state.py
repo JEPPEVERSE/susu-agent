@@ -18,13 +18,11 @@ from main import (
 from susu_agent.agents.teaching_state_updater import TeachingStateUpdate
 from susu_agent.lesson_plan_loader import load_lesson_plan
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
-from susu_agent.schemas.solution import Solution, SolutionStep, TutorQuestion
+from susu_agent.schemas.solution import Solution, SolutionStep, SolveOutcome, TutorQuestion
 
 
 def make_solution(problem_statement: str = "current question") -> Solution:
     return Solution(
-        problem_statement=problem_statement,
-        problem_status="solvable",
         goal="完成题目",
         known_conditions=["已知条件"],
         strategy_summary="先明确目标，再完成推导。",
@@ -178,7 +176,9 @@ class MainRuntimeStateTests(unittest.TestCase):
     ) -> None:
         session_manager = ContextSessionManager()
         repository = StatefulTeachingStateRepository()
-        mock_run.return_value = SimpleNamespace(final_output=make_solution())
+        mock_run.return_value = SimpleNamespace(
+            final_output=SolveOutcome(status="solved", solution=make_solution())
+        )
 
         import asyncio
 
@@ -199,10 +199,7 @@ class MainRuntimeStateTests(unittest.TestCase):
         self.assertIn('"current_user_message": "current question"', context_input)
         self.assertIn("previous question", context_input)
         self.assertNotIn("tool message", context_input)
-        self.assertEqual(
-            tutor_turn.solution.problem_statement,
-            "current question",
-        )
+        self.assertEqual(tutor_turn.solution.goal, "完成题目")
         self.assertEqual(
             repository.state["teaching_progress"]["current_solution_step_id"],
             "step_0",

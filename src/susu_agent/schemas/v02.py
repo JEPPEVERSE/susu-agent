@@ -13,15 +13,9 @@ class VerificationIssue(StrictModel):
     issue_id: str = Field(pattern=r"^issue_[0-9]+$", max_length=100)
     affected_solution_step_ids: list[str] = Field(default_factory=list, max_length=30)
     issue_type: Literal[
-        "problem_mismatch",
-        "missing_condition",
-        "invalid_assumption",
-        "reasoning_gap",
-        "calculation_error",
-        "unsupported_conclusion",
+        "final_answer_error",
+        "step_reasoning_error",
         "lesson_plan_mismatch",
-        "pedagogical_artifact_error",
-        "other",
     ]
     severity: Literal["warning", "error"]
     evidence: str = Field(min_length=1, max_length=2_000)
@@ -30,7 +24,7 @@ class VerificationIssue(StrictModel):
 
 class VerificationReport(StrictModel):
     schema_version: Literal[1] = 1
-    verdict: Literal["passed", "needs_revision", "unsolved"]
+    verdict: Literal["passed", "needs_revision"]
     summary: str = Field(min_length=1, max_length=2_000)
     checked_solution_step_ids: list[str] = Field(default_factory=list, max_length=30)
     issues: list[VerificationIssue] = Field(default_factory=list, max_length=30)
@@ -88,12 +82,24 @@ class TeachingStrategyNode(StrictModel):
         return self
 
 
+class AnticipatedDifficulty(StrictModel):
+    difficulty_id: str = Field(pattern=r"^difficulty_[0-9]+$", max_length=100)
+    related_solution_step_ids: list[str] = Field(default_factory=list, max_length=20)
+    description: str = Field(min_length=1, max_length=500)
+    evidence_source: Literal["problem_structure", "student_model", "both"]
+    likelihood: Literal["low", "medium", "high"]
+    response_plan: str = Field(min_length=1, max_length=1_000)
+
+
 class TeachingStrategy(StrictModel):
     schema_version: Literal[1] = 1
     strategy_id: str = Field(min_length=1, max_length=100)
     summary: str = Field(min_length=1, max_length=2_000)
     initial_node_id: str | None = Field(default=None, max_length=100)
     nodes: list[TeachingStrategyNode] = Field(default_factory=list, max_length=100)
+    anticipated_difficulties: list[AnticipatedDifficulty] = Field(
+        default_factory=list, max_length=30
+    )
     completion_criteria: list[str] = Field(default_factory=list, max_length=20)
     replan_triggers: list[str] = Field(default_factory=list, max_length=20)
 
@@ -113,6 +119,11 @@ class TeachingStrategy(StrictModel):
         }
         if unknown:
             raise ValueError(f"Teaching transitions reference unknown nodes: {sorted(unknown)!r}.")
+        difficulty_ids = [
+            difficulty.difficulty_id for difficulty in self.anticipated_difficulties
+        ]
+        if len(difficulty_ids) != len(set(difficulty_ids)):
+            raise ValueError("Anticipated difficulty ids must be unique.")
         return self
 
 

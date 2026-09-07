@@ -12,6 +12,77 @@ from susu_agent.repositories.teaching_state_repository import TeachingStateRepos
 
 
 class TeachingStateRepositoryTests(unittest.TestCase):
+    def test_version_five_solution_is_migrated_to_the_narrow_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_directory:
+            db_path = Path(temp_directory) / "state.db"
+            repository = TeachingStateRepository(db_path)
+            legacy_state = TeachingStateRepository.create_initial_state("problem_5")
+            legacy_state["schema_version"] = 5
+            legacy_state["original_problem"] = {"problem_statement": "测试题"}
+            legacy_state["solution"] = {
+                "schema_version": 1,
+                "subject": "math",
+                "problem_statement": "测试题",
+                "problem_status": "solvable",
+                "clarification_questions": [],
+                "goal": "完成测试题",
+                "known_conditions": [],
+                "assumptions": [],
+                "knowledge_points": ["旧知识点"],
+                "strategy_summary": "直接求解。",
+                "steps": [
+                    {
+                        "solution_step_id": "step_0",
+                        "lesson_plan_step_id": "S1",
+                        "title": "明确目标",
+                        "goal": "明确目标",
+                        "derivation": "题目目标明确。",
+                        "result": "完成目标识别。",
+                        "knowledge_points": ["旧知识点"],
+                        "tutor_questions": [],
+                    }
+                ],
+                "likely_student_difficulties": [],
+                "final_answer": "测试答案",
+                "verification": [],
+            }
+            legacy_state["verification_report"] = {
+                "schema_version": 1,
+                "verdict": "passed",
+                "summary": "验证通过。",
+                "checked_solution_step_ids": ["step_0"],
+                "issues": [],
+                "confidence": "high",
+            }
+
+            with closing(sqlite3.connect(db_path)) as connection:
+                with connection:
+                    connection.execute(
+                        """
+                        INSERT INTO teaching_states (
+                            session_id, schema_version, state_json, updated_at
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            "problem_5",
+                            5,
+                            json.dumps(legacy_state, ensure_ascii=False),
+                            legacy_state["updated_at"],
+                        ),
+                    )
+
+            migrated = repository.get("problem_5")
+
+        self.assertEqual(migrated["schema_version"], 6)
+        self.assertEqual(migrated["original_problem"]["status"], "solved")
+        self.assertEqual(migrated["solution"]["schema_version"], 2)
+        self.assertNotIn("subject", migrated["solution"])
+        self.assertNotIn("problem_status", migrated["solution"])
+        self.assertNotIn("likely_student_difficulties", migrated["solution"])
+        self.assertEqual(migrated["solution"]["steps"][0]["concept_ids"], [])
+        self.assertIsNone(migrated["verification_report"])
+        self.assertIsNone(migrated["teaching_strategy"])
+
     def test_get_or_create_persists_an_initial_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_directory:
             repository = TeachingStateRepository(Path(temp_directory) / "state.db")
@@ -19,7 +90,7 @@ class TeachingStateRepositoryTests(unittest.TestCase):
             stored_state = repository.get("problem_0")
 
         self.assertEqual(created_state["session_id"], "problem_0")
-        self.assertEqual(created_state["schema_version"], 5)
+        self.assertEqual(created_state["schema_version"], 6)
         self.assertIsNone(created_state["solution"])
         self.assertIsNone(
             created_state["teaching_progress"]["current_solution_step_id"]
@@ -79,7 +150,7 @@ class TeachingStateRepositoryTests(unittest.TestCase):
             migrated_state = repository.get("problem_1")
 
         self.assertIsNotNone(migrated_state)
-        self.assertEqual(migrated_state["schema_version"], 5)
+        self.assertEqual(migrated_state["schema_version"], 6)
         self.assertEqual(migrated_state["lesson_plan"]["subject"], "math")
         self.assertEqual(
             migrated_state["teaching_progress"]["stage"],
@@ -165,7 +236,7 @@ class TeachingStateRepositoryTests(unittest.TestCase):
 
             migrated_state = repository.get("problem_3")
 
-        self.assertEqual(migrated_state["schema_version"], 5)
+        self.assertEqual(migrated_state["schema_version"], 6)
         self.assertIsNone(migrated_state["solution"])
         self.assertEqual(
             migrated_state["teaching_progress"]["completed_solution_step_ids"],

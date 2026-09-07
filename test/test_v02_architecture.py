@@ -34,7 +34,7 @@ class V02ArchitectureTests(unittest.TestCase):
                 issues=[
                     VerificationIssue(
                         issue_id="issue_0",
-                        issue_type="calculation_error",
+                        issue_type="step_reasoning_error",
                         severity="error",
                         evidence="2 + 2 was evaluated as 5.",
                         revision_instruction="Recalculate the step.",

@@ -146,6 +146,9 @@ class TutorWebRuntime:
             ),
             "v02_runtime": {
                 "architecture_version": "0.2",
+                "problem_status": state.get("original_problem", {}).get(
+                    "status", "pending"
+                ),
                 "solution_ready": state.get("solution") is not None,
                 "verification_ready": state.get("verification_report") is not None,
                 "strategy_ready": state.get("teaching_strategy") is not None,
