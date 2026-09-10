@@ -30,12 +30,9 @@ from susu_agent.agents.teaching_executor import (
 )
 from susu_agent.agents.teaching_planner import (
     TeachingPlannerRunContext,
+    build_subject_level_policy,
     build_teaching_planner_input,
     teaching_planner_agent,
-)
-from susu_agent.agents.teaching_state_updater import (
-    apply_teaching_execution,
-    validate_teaching_execution_against_state,
 )
 from susu_agent.context_builder import ContextMessage
 from susu_agent.lesson_plan_loader import LessonPlanBundle
@@ -49,6 +46,13 @@ from susu_agent.schemas.v02 import (
     TeachingExecution,
     TeachingStrategy,
     VerificationReport,
+)
+from susu_agent.teaching_runtime import (
+    apply_teaching_execution,
+    render_teaching_response,
+    resolve_execution_decision,
+    validate_strategy_runtime_contract,
+    validate_teaching_execution_against_state,
 )
 from susu_agent.structured_output import parse_structured_output
 
@@ -126,7 +130,8 @@ class V02Orchestrator:
             student_model,
             recent_messages,
         )
-        if execution.control_signal == "replan_required":
+        decision = resolve_execution_decision(state, execution)
+        if decision.control_signal == "replan_required":
             state = apply_teaching_execution(state, execution)
             self.teaching_states.save(state, lesson_plan=lesson_plan)
             state = await self._plan(
@@ -141,7 +146,7 @@ class V02Orchestrator:
             )
         next_state = apply_teaching_execution(state, execution)
         self.teaching_states.save(next_state, lesson_plan=lesson_plan)
-        return execution.response, next_state
+        return render_teaching_response(execution), next_state
 
     async def summarize_if_needed(self, session_id: str) -> bool:
         """在学生回复已经返回后执行低频长期模型总结。"""
@@ -150,7 +155,8 @@ class V02Orchestrator:
             return False
         state, lesson_plan = result
         if (
-            state["teaching_progress"]["stage"] != "complete"
+            state.get("teaching_strategy") is None
+            or state["teaching_progress"]["current_strategy_node_id"] is not None
             or state["v02_meta"]["summary_completed"]
         ):
             return False
@@ -293,6 +299,9 @@ class V02Orchestrator:
         verification = VerificationReport.model_validate(
             state["verification_report"]
         )
+        subject_level_policy = build_subject_level_policy(
+            solution, student_model, lesson_plan.subject
+        )
         strategy = await self._run_structured_agent(
             teaching_planner_agent,
             input=build_teaching_planner_input(
@@ -301,38 +310,22 @@ class V02Orchestrator:
                 student_model,
                 self.teacher_model,
                 state,
+                subject_level_policy,
             ),
             context=TeachingPlannerRunContext(lesson_plan=lesson_plan),
             output_type=TeachingStrategy,
             validator=lambda artifact: self._validate_strategy_references(
-                artifact, solution
+                artifact, solution, subject_level_policy
             ),
         )
         state["teaching_strategy"] = strategy.model_dump(mode="json")
         state["teaching_progress"]["current_strategy_node_id"] = (
             strategy.initial_node_id
         )
-        if strategy.initial_node_id is not None:
-            first = next(
-                node for node in strategy.nodes
-                if node.node_id == strategy.initial_node_id
-            )
-            if first.solution_step_id is not None:
-                state["teaching_progress"]["current_solution_step_id"] = (
-                    first.solution_step_id
-                )
-                selected_step = next(
-                    step
-                    for step in solution.steps
-                    if step.solution_step_id == first.solution_step_id
-                )
-                state["teaching_progress"]["current_lesson_plan_step_id"] = (
-                    selected_step.lesson_plan_step_id
-                )
-            if first.solution_question_id is not None:
-                state["teaching_progress"]["current_solution_question_id"] = (
-                    first.solution_question_id
-                )
+        state["teaching_progress"]["completed_strategy_node_ids"] = []
+        state["teaching_progress"]["satisfied_checkpoint_ids"] = []
+        state["teaching_progress"]["attempts_by_node"] = {}
+        state["teaching_progress"]["hint_indices_by_node"] = {}
         state["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.teaching_states.save(state, lesson_plan=lesson_plan)
         return state
@@ -485,7 +478,9 @@ class V02Orchestrator:
 
     @staticmethod
     def _validate_strategy_references(
-        strategy: TeachingStrategy, solution: Solution
+        strategy: TeachingStrategy,
+        solution: Solution,
+        subject_level_policy: Mapping[str, Any] | None = None,
     ) -> None:
         known_steps = {step.solution_step_id for step in solution.steps}
         known_questions = {
@@ -510,8 +505,7 @@ class V02Orchestrator:
                 "Teaching strategy references unknown Solution artifacts: "
                 f"steps={sorted(unknown_steps)!r}, questions={sorted(unknown_questions)!r}."
             )
-        if not strategy.nodes or strategy.initial_node_id is None:
-            raise ValueError("A runnable teaching strategy requires an initial node.")
+        validate_strategy_runtime_contract(strategy)
         question_owner = {
             question.question_id: step.solution_step_id
             for step in solution.steps
@@ -528,6 +522,26 @@ class V02Orchestrator:
                 "Teaching strategy nodes bind Solution questions to the wrong steps: "
                 f"{mismatched_nodes!r}."
             )
+        if subject_level_policy is not None:
+            entry_question_id = subject_level_policy.get(
+                "recommended_entry_question_id"
+            )
+            entry_step_id = subject_level_policy.get(
+                "recommended_entry_solution_step_id"
+            )
+            initial_node = next(
+                node
+                for node in strategy.nodes
+                if node.node_id == strategy.initial_node_id
+            )
+            if entry_question_id is not None and (
+                initial_node.solution_question_id != entry_question_id
+                or initial_node.solution_step_id != entry_step_id
+            ):
+                raise ValueError(
+                    "Teaching strategy initial node must match the code-selected "
+                    "subject-level entry question."
+                )
         unknown_difficulty_steps = sorted(
             {
                 step_id

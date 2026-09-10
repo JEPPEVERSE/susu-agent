@@ -18,6 +18,7 @@ from susu_agent.schemas.v02 import (
     TeachingExecution,
     TeachingStrategy,
     TeachingStrategyNode,
+    TeachingTransition,
     VerificationReport,
 )
 
@@ -27,6 +28,22 @@ def result(value: object) -> SimpleNamespace:
 
 
 class V02OrchestratorTests(unittest.TestCase):
+    def test_unplanned_state_is_not_mistaken_for_completed_teaching(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_directory:
+            database = Path(temp_directory) / "runtime.db"
+            states = TeachingStateRepository(database)
+            states.get_or_create("problem_0")
+            orchestrator = V02Orchestrator(
+                states,
+                StudentModelRepository(database),
+            )
+
+            summarized = asyncio.run(
+                orchestrator.summarize_if_needed("problem_0")
+            )
+
+        self.assertFalse(summarized)
+
     @patch("susu_agent.orchestrator.Runner.run", new_callable=AsyncMock)
     def test_unresolved_problem_does_not_reach_verifier(
         self, mock_run: AsyncMock
@@ -109,23 +126,33 @@ class V02OrchestratorTests(unittest.TestCase):
                     goal="明确目标",
                     teaching_action="ask_question",
                     prompt_intent="询问题目目标",
+                    answer_checkpoints=["说出题目目标"],
                     disclosure_boundary="不透露最终答案",
+                    transitions=[
+                        TeachingTransition(condition="correct", action="advance"),
+                        TeachingTransition(condition="partially_correct", next_node_id="teach_0", action="give_hint"),
+                        TeachingTransition(condition="incorrect", next_node_id="teach_0", action="retry"),
+                        TeachingTransition(condition="no_idea", next_node_id="teach_0", action="give_hint"),
+                        TeachingTransition(condition="unclear", next_node_id="teach_0", action="retry"),
+                        TeachingTransition(condition="student_requests_solution", action="complete"),
+                    ],
                 )
             ],
         )
         first_execution = TeachingExecution(
-            response="先说说：题目要求什么？",
+            feedback="先说说：",
             assessment="not_applicable",
-            state_delta=ExecutionStateDelta(open_question="题目要求什么？"),
+            state_delta=ExecutionStateDelta(
+                open_question="题目要求什么？",
+                open_question_target_checkpoint_indices=[0],
+            ),
         )
         second_execution = TeachingExecution(
-            response="对，目标已经找到了。题目要求什么？",
+            feedback="对，目标已经找到了。",
             assessment="correct",
             state_delta=ExecutionStateDelta(
                 answered_open_question_summary="学生说出了目标。",
-                answered_open_question_understanding="correct",
-                answered_open_question_assessment="回答覆盖目标检查点。",
-                open_question="题目要求什么？",
+                answered_open_question_feedback="回答覆盖目标检查点。",
             ),
         )
         invalid_first_execution = json.dumps(
@@ -170,8 +197,8 @@ class V02OrchestratorTests(unittest.TestCase):
 
             first_response, second_response = asyncio.run(run())
 
-        self.assertEqual(first_response, first_execution.response)
-        self.assertEqual(second_response, second_execution.response)
+        self.assertEqual(first_response, "先说说：\n\n题目要求什么？")
+        self.assertEqual(second_response, second_execution.feedback)
         self.assertEqual(mock_run.await_count, 7)
         self.assertEqual(
             [call.args[0].name for call in mock_run.await_args_list],

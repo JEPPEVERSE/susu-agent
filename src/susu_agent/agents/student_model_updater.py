@@ -24,9 +24,50 @@ def build_student_model_summarizer_input(
 ) -> str:
     solution = teaching_state.get("solution") or {}
     progress = teaching_state.get("teaching_progress", {})
+    strategy = teaching_state.get("teaching_strategy") or {}
+    subject = teaching_state.get("lesson_plan", {}).get("subject")
+    misconceptions = student_model.get("learning_history", {}).get(
+        "persistent_misconceptions", []
+    )
+    relevant_concept_ids = {
+        concept_id
+        for step in solution.get("steps", [])
+        for concept_id in step.get("concept_ids", [])
+    }
+    current_subject_profile = dict(
+        student_model.get("subjects", {}).get(subject, {})
+    )
+    knowledge_graph = current_subject_profile.get("knowledge_graph", {})
+    current_subject_profile["knowledge_graph"] = {
+        "nodes": [
+            node
+            for node in knowledge_graph.get("nodes", [])
+            if node.get("concept_id") in relevant_concept_ids
+        ],
+        "edges": [],
+    }
+    student_model_context = {
+        "student_id": student_model.get("student_id"),
+        "model_version": student_model.get("model_version", 1),
+        "current_subject": subject,
+        "current_subject_profile": current_subject_profile,
+        "current_subject_misconceptions": [
+            item for item in misconceptions if item.get("subject") == subject
+        ],
+        "meta_knowledge_cards": student_model.get("meta_knowledge_cards", []),
+    }
+    completed_node_ids = set(progress.get("completed_strategy_node_ids", []))
+    completed_solution_step_ids = list(
+        dict.fromkeys(
+            node.get("solution_step_id")
+            for node in strategy.get("nodes", [])
+            if node.get("node_id") in completed_node_ids
+            and node.get("solution_step_id") is not None
+        )
+    )
     return json.dumps(
         {
-            "subject": teaching_state.get("lesson_plan", {}).get("subject"),
+            "subject": subject,
             "solution_outline": {
                 "goal": solution.get("goal"),
                 "strategy_summary": solution.get("strategy_summary"),
@@ -45,15 +86,12 @@ def build_student_model_summarizer_input(
                 "question_history": teaching_state.get(
                     "open_question_history", []
                 ),
-                "completed_solution_step_ids": progress.get(
-                    "completed_solution_step_ids", []
-                ),
-                "confirmed_steps": progress.get("confirmed_steps", []),
-                "rolling_summary": teaching_state.get("memory_meta", {}).get(
-                    "rolling_summary", ""
+                "completed_solution_step_ids": completed_solution_step_ids,
+                "conversation_summary": teaching_state.get(
+                    "conversation_summary", ""
                 ),
             },
-            "student_model": student_model,
+            "student_model": student_model_context,
             "base_model_version": student_model.get("model_version", 1),
         },
         ensure_ascii=False,

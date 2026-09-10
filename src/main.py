@@ -16,11 +16,6 @@ from susu_agent.agents.math_solver import (
     math_solution_agent,
     validate_solution_lesson_plan_references,
 )
-from susu_agent.agents.teaching_state_updater import (
-    TeachingStateUpdate,
-    apply_teaching_state_update,
-    teaching_state_updater,
-)
 from susu_agent.choice import Choice, ChoiceAction
 from susu_agent.context_builder import ContextBuilder, ContextMessage
 from susu_agent.lesson_plan_loader import LessonPlanBundle
@@ -40,7 +35,7 @@ context_builder = ContextBuilder(recent_message_limit=6)
 
 @dataclass(frozen=True, slots=True)
 class TutorTurn:
-    """同一轮教学共享的输入、状态和教案快照。"""
+    """兼容旧调试入口；正式 v0.2 流程由 V02Orchestrator 执行。"""
 
     context_input: str
     teaching_state: dict[str, object]
@@ -206,7 +201,6 @@ async def ensure_math_solution(
         math_solution_agent,
         input=build_math_solver_input(
             problem_statement,
-            teaching_state.get("student_model", {}),
         ),
         context=MathSolverRunContext(lesson_plan=lesson_plan),
     )
@@ -233,25 +227,8 @@ def _attach_solution(
     teaching_state: dict[str, object],
     solution: Solution,
 ) -> None:
-    """把不可变题目解法和初始执行游标写入 TeachingState。"""
+    """兼容调试入口：只写入不可变解法，执行游标由策略节点派生。"""
     teaching_state["solution"] = solution.model_dump(mode="json")
-    progress = teaching_state["teaching_progress"]
-    if not isinstance(progress, dict):
-        raise TypeError("teaching_progress must be a dictionary.")
-    if solution.steps:
-        first_step = solution.steps[0]
-        progress["current_solution_step_id"] = first_step.solution_step_id
-        progress["current_lesson_plan_step_id"] = (
-            first_step.lesson_plan_step_id
-        )
-        progress["solution_step_summary"] = (
-            f"准备执行：{first_step.title}"
-        )
-        progress["current_solution_question_id"] = (
-            first_step.tutor_questions[0].question_id
-            if first_step.tutor_questions
-            else None
-        )
     teaching_state["updated_at"] = datetime.now(timezone.utc).isoformat()
 
 
@@ -335,61 +312,6 @@ async def stream_answer(
         return None
     finally:
         print()
-
-
-async def update_teaching_state(
-    question: str,
-    teacher_response: str,
-    current_teaching_state: dict[str, object],
-    lesson_plan: LessonPlanBundle,
-    teaching_state_repository: TeachingStateRepository,
-) -> None:
-    """调用后台更新器，合并并保存本轮教学状态。"""
-    session_id = current_teaching_state["session_id"]
-    if "original_problem" not in current_teaching_state:
-        current_teaching_state["original_problem"] = {
-            "problem_statement": question,
-            "status": "pending",
-            "clarification_questions": [],
-            "clarification_context": [],
-        }
-
-    updater_input = json.dumps(
-        {
-            "current_teaching_state": current_teaching_state,
-            "student_message": question,
-            "teacher_response": teacher_response,
-            "solution": current_teaching_state.get("solution"),
-            "lesson_plan_instruction": lesson_plan.instruction,
-            "lesson_plan_steps": [
-                {"id": step.step_id, "name": step.name}
-                for step in lesson_plan.steps
-            ],
-        },
-        ensure_ascii=False,
-    )
-
-    try:
-        result = await Runner.run(
-            teaching_state_updater,
-            input=updater_input,
-        )
-        update = parse_structured_output(
-            result.final_output,
-            TeachingStateUpdate,
-        )
-
-        next_teaching_state = apply_teaching_state_update(
-            current_teaching_state,
-            update,
-        )
-        teaching_state_repository.save(
-            next_teaching_state,
-            lesson_plan=lesson_plan,
-        )
-        logger.info("Updated teaching state for session %s", session_id)
-    except Exception:
-        logger.exception("Teaching state update failed for session %s", session_id)
 
 
 async def main() -> None:

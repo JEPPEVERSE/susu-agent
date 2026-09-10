@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from pydantic import ValidationError
+from jsonschema import ValidationError as JsonSchemaValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -22,6 +23,7 @@ from susu_agent.schemas.v02 import (
     VerificationIssue,
     VerificationReport,
 )
+from susu_agent.teaching_runtime import validate_strategy_runtime_contract
 
 
 class V02ArchitectureTests(unittest.TestCase):
@@ -66,12 +68,24 @@ class V02ArchitectureTests(unittest.TestCase):
                 ],
             )
 
-    def test_execution_evidence_is_merged_deterministically(self) -> None:
-        from susu_agent.agents.teaching_state_updater import apply_teaching_execution
-
-        state = TeachingStateRepository.create_initial_state("problem_0")
-        state["teaching_strategy"] = TeachingStrategy(
-            strategy_id="strategy_0",
+    def test_runtime_rejects_a_correct_transition_that_can_loop(self) -> None:
+        transitions = [
+            TeachingTransition(
+                condition=condition,
+                next_node_id="teach_0" if condition != "student_requests_solution" else None,
+                action="retry" if condition != "student_requests_solution" else "complete",
+            )
+            for condition in (
+                "correct",
+                "partially_correct",
+                "incorrect",
+                "no_idea",
+                "unclear",
+                "student_requests_solution",
+            )
+        ]
+        strategy = TeachingStrategy(
+            strategy_id="strategy_loop",
             summary="test",
             initial_node_id="teach_0",
             nodes=[
@@ -80,52 +94,88 @@ class V02ArchitectureTests(unittest.TestCase):
                     goal="test",
                     teaching_action="ask_question",
                     prompt_intent="ask",
+                    answer_checkpoints=["checkpoint"],
                     disclosure_boundary="do not reveal the result",
+                    transitions=transitions,
                 )
             ],
-        ).model_dump(mode="json")
+        )
+        with self.assertRaisesRegex(ValueError, "must leave the node"):
+            validate_strategy_runtime_contract(strategy)
+
+    def test_execution_evidence_is_merged_deterministically(self) -> None:
+        from susu_agent.teaching_runtime import apply_teaching_execution
+        from test_teaching_state_update import make_runtime_state
+
+        state = apply_teaching_execution(
+            make_runtime_state(),
+            TeachingExecution(
+                assessment="not_applicable",
+                state_delta=ExecutionStateDelta(
+                    open_question="目标是什么？",
+                    open_question_target_checkpoint_indices=[0],
+                ),
+            ),
+        )
         execution = TeachingExecution(
-            response="请继续尝试。",
+            feedback="目标已识别。",
             assessment="partially_correct",
             state_delta=ExecutionStateDelta(
-                current_strategy_node_id="teach_0",
-                open_question="请继续尝试。",
+                answered_open_question_summary="学生识别了目标。",
+                answered_open_question_feedback="目标检查点已满足。",
+                satisfied_checkpoint_indices_to_add=[0],
+                open_question="范围是什么？",
+                open_question_target_checkpoint_indices=[1],
             ),
             learning_evidence=[
                 LearningEvidence(
                     evidence_id="problem_0_turn_0",
-                    concept_id="equation_setup",
+                    concept_id="problem_identification",
                     observation="列式正确，但计算尚未完成。",
                     assessment="mixed",
                     confidence="medium",
+                    source_question_id="question_0",
                 )
             ],
         )
 
         updated = apply_teaching_execution(state, execution)
-        self.assertEqual(updated["learning_evidence"][0]["concept_id"], "equation_setup")
+        self.assertEqual(
+            updated["learning_evidence"][0]["concept_id"],
+            "problem_identification",
+        )
 
     def test_continuing_execution_requires_a_visible_open_question(self) -> None:
-        with self.assertRaises(ValidationError):
-            TeachingExecution(
-                response="请继续。",
+        from susu_agent.teaching_runtime import validate_teaching_execution_against_state
+        from test_teaching_state_update import make_runtime_state
+
+        execution = TeachingExecution(
+                feedback="请继续。",
                 assessment="not_applicable",
                 state_delta=ExecutionStateDelta(),
             )
+        with self.assertRaisesRegex(ValueError, "must ask exactly one question"):
+            validate_teaching_execution_against_state(make_runtime_state(), execution)
 
-    def test_registered_question_must_appear_in_response(self) -> None:
-        with self.assertRaises(ValidationError):
-            TeachingExecution(
-                response="请思考下一步。",
-                assessment="not_applicable",
-                state_delta=ExecutionStateDelta(open_question="题目要求什么？"),
-            )
+    def test_student_response_is_rendered_from_one_question_source(self) -> None:
+        from susu_agent.teaching_runtime import render_teaching_response
+
+        execution = TeachingExecution(
+            feedback="请思考下一步。",
+            assessment="not_applicable",
+            state_delta=ExecutionStateDelta(open_question="题目要求什么？"),
+        )
+
+        self.assertEqual(
+            render_teaching_response(execution),
+            "请思考下一步。\n\n题目要求什么？",
+        )
 
     def test_state_rejects_an_orphan_progress_question(self) -> None:
         state = TeachingStateRepository.create_initial_state("problem_0")
         state["teaching_progress"]["open_question"] = "没有历史记录的问题"
 
-        with self.assertRaisesRegex(ValueError, "requires an open history item"):
+        with self.assertRaises(JsonSchemaValidationError):
             validate_teaching_state(state)
 
     def test_student_model_patch_uses_optimistic_version_and_evidence_gate(self) -> None:
@@ -151,7 +201,9 @@ class V02ArchitectureTests(unittest.TestCase):
 
         self.assertEqual(updated["model_version"], 2)
         self.assertEqual(
-            updated["learning_history"]["concept_mastery"][0]["concept_id"],
+            updated["subjects"]["math"]["knowledge_graph"]["nodes"][0][
+                "concept_id"
+            ],
             "equation_setup",
         )
 
