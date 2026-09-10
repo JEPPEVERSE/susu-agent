@@ -114,11 +114,6 @@ class SolutionTests(unittest.TestCase):
                 "clarification_context": [],
             }
             state["solution"] = solution.model_dump(mode="json")
-            state["teaching_progress"]["current_solution_step_id"] = "step_0"
-            state["teaching_progress"]["current_lesson_plan_step_id"] = "S3"
-            state["teaching_progress"]["current_solution_question_id"] = (
-                "question_0"
-            )
             state["updated_at"] = datetime.now(timezone.utc).isoformat()
 
             repository.save(state, lesson_plan=lesson_plan)
@@ -128,10 +123,7 @@ class SolutionTests(unittest.TestCase):
             restored["solution"]["steps"][0]["solution_step_id"],
             "step_0",
         )
-        self.assertEqual(
-            restored["teaching_progress"]["current_lesson_plan_step_id"],
-            "S3",
-        )
+        self.assertNotIn("current_solution_step_id", restored["teaching_progress"])
 
     def test_math_solver_uses_structured_solution_output(self) -> None:
         lesson_plan = load_lesson_plan("math")
@@ -150,7 +142,7 @@ class SolutionTests(unittest.TestCase):
             self.assertIn("## JSON 文本兼容模式", instruction)
         self.assertIn("# 数学解题规划 Agent Instruction", instruction)
         self.assertIn("S3: 确定动静关系与控制参数", instruction)
-        self.assertIn("高中数学解题理论体系", instruction)
+        self.assertIn("数学解题理论上下文", instruction)
 
     def test_solver_input_is_student_independent_in_v02(self) -> None:
         payload = build_math_solver_input(

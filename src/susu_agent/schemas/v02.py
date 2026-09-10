@@ -137,87 +137,56 @@ class LearningEvidence(StrictModel):
 
 
 class ExecutionStateDelta(StrictModel):
-    stage: Literal[
-        "understand_task", "recall_knowledge", "make_plan", "execute", "verify", "complete"
-    ] | None = None
-    current_strategy_node_id: str | None = Field(default=None, max_length=100)
-    current_solution_step_id: str | None = Field(default=None, max_length=100)
-    completed_solution_step_ids_to_add: list[str] = Field(default_factory=list, max_length=30)
-    current_solution_question_id: str | None = Field(default=None, max_length=100)
-    completed_solution_question_ids_to_add: list[str] = Field(default_factory=list, max_length=100)
-    confirmed_steps_to_add: list[str] = Field(default_factory=list, max_length=20)
-    misconceptions_to_add: list[str] = Field(default_factory=list, max_length=10)
     open_question: str | None = Field(default=None, min_length=1, max_length=1_000)
+    open_question_target_checkpoint_indices: list[int] = Field(
+        default_factory=list, max_length=10
+    )
     answered_open_question_summary: str | None = Field(default=None, max_length=500)
-    answered_open_question_understanding: Literal[
-        "no_idea", "incorrect", "partially_correct", "correct", "unclear"
-    ] | None = None
-    answered_open_question_assessment: str | None = Field(default=None, max_length=500)
-    next_teacher_action: Literal[
-        "ask_question", "give_hint", "explain", "verify_answer"
-    ] | None = None
-    rolling_summary: str | None = Field(default=None, max_length=2_000)
+    answered_open_question_feedback: str | None = Field(default=None, max_length=500)
+    satisfied_checkpoint_indices_to_add: list[int] = Field(
+        default_factory=list, max_length=10
+    )
+    conversation_summary: str | None = Field(default=None, max_length=2_000)
 
     @model_validator(mode="after")
     def validate_answer_fields(self) -> Self:
         answer_fields = (
             self.answered_open_question_summary,
-            self.answered_open_question_understanding,
-            self.answered_open_question_assessment,
+            self.answered_open_question_feedback,
         )
         if any(value is not None for value in answer_fields) and any(
             value is None for value in answer_fields
         ):
             raise ValueError(
-                "An open-question answer requires summary, understanding, and assessment."
+                "An open-question answer requires both summary and feedback."
             )
         return self
 
 
 class TeachingExecution(StrictModel):
     schema_version: Literal[1] = 1
-    response: str = Field(min_length=1, max_length=8_000)
+    feedback: str = Field(default="", max_length=6_900)
     assessment: Literal[
-        "not_applicable", "no_idea", "incorrect", "partially_correct", "correct", "unclear"
+        "not_applicable",
+        "no_idea",
+        "incorrect",
+        "partially_correct",
+        "correct",
+        "unclear",
+        "student_requests_solution",
     ]
     state_delta: ExecutionStateDelta
     learning_evidence: list[LearningEvidence] = Field(default_factory=list, max_length=20)
-    control_signal: Literal["continue", "replan_required", "complete"] = "continue"
-    control_reason: str = Field(default="", max_length=1_000)
 
     @model_validator(mode="after")
     def validate_turn_contract(self) -> Self:
         delta = self.state_delta
-        if self.control_signal == "continue" and delta.open_question is None:
+        if delta.open_question is None and delta.open_question_target_checkpoint_indices:
             raise ValueError(
-                "A continuing teaching turn must register exactly one open question."
+                "Checkpoint targets require an open question."
             )
-        if self.control_signal == "complete":
-            if delta.open_question is not None:
-                raise ValueError("A completed teaching turn cannot open a new question.")
-            if delta.stage not in {None, "complete"}:
-                raise ValueError(
-                    "A completed teaching turn cannot set a non-complete stage."
-                )
-        if self.control_signal == "replan_required" and delta.open_question is not None:
-            raise ValueError("A replanning request cannot open a question on the old strategy.")
-        if delta.open_question is not None and delta.open_question.strip() not in self.response:
-            raise ValueError(
-                "The registered open question must appear verbatim in the student-facing response."
-            )
-
-        answer_understanding = delta.answered_open_question_understanding
-        if self.assessment == "not_applicable" and answer_understanding is not None:
-            raise ValueError(
-                "An unassessed turn cannot record an answer to an open question."
-            )
-        if (
-            answer_understanding is not None
-            and self.assessment != answer_understanding
-        ):
-            raise ValueError(
-                "The turn assessment must match the open-question assessment."
-            )
+        if not self.feedback.strip() and delta.open_question is None:
+            raise ValueError("A teaching turn must contain feedback or an open question.")
         return self
 
 
@@ -232,6 +201,7 @@ class ConceptMasteryPatch(StrictModel):
 
 class MisconceptionPatch(StrictModel):
     concept_id: str = Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=100)
+    subject: Literal["math", "chinese", "english", "physics", "chemistry", "biology"]
     description: str = Field(min_length=1, max_length=300)
     evidence_ids: list[str] = Field(default_factory=list, max_length=30)
     confidence: Literal["low", "medium", "high"]
@@ -244,11 +214,24 @@ class MetaKnowledgeCardPatch(StrictModel):
     evidence_ids: list[str] = Field(default_factory=list, max_length=30)
 
 
+class SubjectLevelPatch(StrictModel):
+    subject: Literal["math", "chinese", "english", "physics", "chemistry", "biology"]
+    proposed_state: Literal[
+        "unassessed", "foundation", "developing", "proficient", "advanced"
+    ]
+    evidence_summary: str = Field(min_length=1, max_length=500)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=50)
+    confidence: Literal["low", "medium", "high"]
+
+
 class StudentModelPatch(StrictModel):
     schema_version: Literal[1] = 1
     base_model_version: int = Field(ge=1)
     concept_updates: list[ConceptMasteryPatch] = Field(default_factory=list, max_length=50)
     misconception_updates: list[MisconceptionPatch] = Field(default_factory=list, max_length=20)
+    subject_level_updates: list[SubjectLevelPatch] = Field(
+        default_factory=list, max_length=6
+    )
     meta_knowledge_cards_to_add: list[MetaKnowledgeCardPatch] = Field(
         default_factory=list, max_length=30
     )

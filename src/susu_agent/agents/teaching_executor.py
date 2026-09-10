@@ -13,6 +13,7 @@ from susu_agent.lesson_plan_loader import LessonPlanBundle
 from susu_agent.model_config import resolve_agent_model, supports_native_structured_output
 from susu_agent.schemas.v02 import TeachingExecution
 from susu_agent.structured_output import build_json_output_instruction
+from susu_agent.teaching_runtime import MAX_NODE_ATTEMPTS
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,62 @@ def provide_teaching_executor_instructions(
     _agent: Agent[TeachingExecutorRunContext],
 ) -> str:
     return compose_teaching_executor_instructions(context.context.lesson_plan)
+
+
+def build_executor_student_context(
+    student_model: Mapping[str, Any],
+    teaching_state: Mapping[str, Any],
+    current_step: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """投影当轮个性化所需字段，避免重复发送完整六科学习档案。"""
+    subject = teaching_state.get("lesson_plan", {}).get("subject")
+    identity = student_model.get("identity", {})
+    learning_profile = student_model.get("learning_profile", {})
+    subject_profile = student_model.get("subjects", {}).get(subject, {})
+    knowledge_graph = subject_profile.get("knowledge_graph", {})
+    relevant_concept_ids = set(
+        current_step.get("concept_ids", []) if current_step is not None else []
+    )
+    misconceptions = student_model.get("learning_history", {}).get(
+        "persistent_misconceptions", []
+    )
+    return {
+        "student_id": student_model.get("student_id"),
+        "model_version": student_model.get("model_version"),
+        "identity": {
+            "display_name": identity.get("display_name"),
+            "grade": identity.get("grade", "unknown"),
+        },
+        "learning_profile": {
+            "strength_subjects": learning_profile.get("strength_subjects", []),
+            "support_subjects": learning_profile.get("support_subjects", []),
+            "learning_styles": learning_profile.get("learning_styles", []),
+            "learning_engagement": learning_profile.get(
+                "learning_engagement", "unknown"
+            ),
+            "preferences": learning_profile.get("preferences", {}),
+        },
+        "current_subject": subject,
+        "current_subject_profile": {
+            "level": subject_profile.get("level", {}),
+            "strengths": subject_profile.get("strengths", []),
+            "weaknesses": subject_profile.get("weaknesses", []),
+            "knowledge_graph": {
+                "nodes": [
+                    node
+                    for node in knowledge_graph.get("nodes", [])
+                    if node.get("concept_id") in relevant_concept_ids
+                ]
+            },
+            "notes": subject_profile.get("notes", ""),
+        },
+        "relevant_misconceptions": [
+            item
+            for item in misconceptions
+            if item.get("subject") == subject
+            and item.get("concept_id") in relevant_concept_ids
+        ],
+    }
 
 
 def build_teaching_executor_input(
@@ -70,7 +127,11 @@ def build_teaching_executor_input(
         ]
     solution = teaching_state.get("solution")
     current_step = None
-    current_step_id = progress.get("current_solution_step_id") if isinstance(progress, Mapping) else None
+    current_step_id = (
+        current_node.get("solution_step_id")
+        if isinstance(current_node, Mapping)
+        else None
+    )
     if isinstance(solution, Mapping):
         current_step = next(
             (step for step in solution.get("steps", []) if step.get("solution_step_id") == current_step_id),
@@ -117,6 +178,14 @@ def build_teaching_executor_input(
         )
         if set(item.get("related_solution_step_ids", [])) & available_step_ids
     ]
+    satisfied_prefix = f"{current_node_id}:checkpoint_"
+    satisfied_checkpoint_indices = [
+        int(value.removeprefix(satisfied_prefix))
+        for value in progress.get("satisfied_checkpoint_ids", [])
+        if isinstance(value, str) and value.startswith(satisfied_prefix)
+    ]
+    attempts = progress.get("attempts_by_node", {}).get(current_node_id, 0)
+    hint_index = progress.get("hint_indices_by_node", {}).get(current_node_id, 0)
     return json.dumps(
         {
             "current_user_message": current_user_message,
@@ -129,11 +198,22 @@ def build_teaching_executor_input(
             "completion_criteria": strategy.get("completion_criteria", []) if isinstance(strategy, Mapping) else [],
             "replan_triggers": strategy.get("replan_triggers", []) if isinstance(strategy, Mapping) else [],
             "teaching_progress": progress,
+            "runtime_control": {
+                "current_node_attempts": attempts,
+                "max_node_attempts": MAX_NODE_ATTEMPTS,
+                "current_hint_index": hint_index,
+                "satisfied_checkpoint_indices": satisfied_checkpoint_indices,
+                "force_advance_after_this_answer_if_not_complete": (
+                    attempts >= MAX_NODE_ATTEMPTS - 1
+                ),
+            },
             "active_questions": [
                 item for item in teaching_state.get("open_question_history", [])
                 if item.get("status") == "open"
             ],
-            "student_model": student_model,
+            "student_model": build_executor_student_context(
+                student_model, teaching_state, current_step
+            ),
             "teacher_model": teacher_model,
             "recent_messages": [asdict(message) for message in recent_messages[-4:]],
         },

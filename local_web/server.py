@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 import threading
@@ -34,6 +35,7 @@ from susu_agent.session import SessionManager  # noqa: E402
 
 
 load_dotenv(PROJECT_ROOT / ".env")
+logger = logging.getLogger(__name__)
 
 
 class TutorWebRuntime:
@@ -75,11 +77,20 @@ class TutorWebRuntime:
             raise ValueError("问题过长，请控制在 8000 个字符以内。")
 
         with self._lock:
-            teacher_response = asyncio.run(
-                self._ask_async(normalized_question)
-            )
+            try:
+                teacher_response = asyncio.run(
+                    self._ask_async(normalized_question)
+                )
+            except Exception:
+                logger.exception("Teaching turn failed; returning a retryable response")
+                return {
+                    "answer": "本轮表达暂时没有生成，请重新发送刚才的内容。",
+                    "degraded": True,
+                    **self._bootstrap_unlocked(include_messages=False),
+                }
             return {
                 "answer": teacher_response,
+                "degraded": False,
                 **self._bootstrap_unlocked(include_messages=False),
             }
 

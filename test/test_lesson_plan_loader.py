@@ -15,22 +15,22 @@ class LessonPlanLoaderTests(unittest.TestCase):
 
         self.assertEqual(lesson_plan.subject, "math")
         self.assertEqual(lesson_plan.manifest_schema_version, 1)
-        self.assertEqual(lesson_plan.lesson_plan_version, "0.1.0")
+        self.assertEqual(lesson_plan.lesson_plan_version, "2.0.0")
         self.assertEqual(lesson_plan.step_ids, tuple(f"S{i}" for i in range(1, 10)))
         self.assertEqual(len(lesson_plan.content_digest), 64)
         self.assertIn("S1 明确研究对象与交付目标", lesson_plan.instruction)
         self.assertIn("要素关系网", lesson_plan.context)
         self.assertEqual(
             lesson_plan.instruction_sources,
-            ("math/math_tutor_core.md",),
+            ("math/instruction.md",),
         )
         self.assertEqual(
             lesson_plan.context_sources,
-            ("math/math_problem_solving_framework.md",),
+            ("math/context.md",),
         )
         selected_context = lesson_plan.select_context("S3")
-        self.assertIn("自由度与动静", selected_context.content)
-        self.assertNotIn("F7：原题检验", selected_context.content)
+        self.assertIn("系统与自由度", selected_context.content)
+        self.assertNotIn("F8 即时检查", selected_context.content)
         self.assertLess(len(selected_context.content), len(lesson_plan.context))
 
     def test_manifest_order_is_used_and_unlisted_files_are_ignored(self) -> None:

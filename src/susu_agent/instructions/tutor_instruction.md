@@ -26,7 +26,7 @@ Solution 是内部计划，不是学生已经完成的内容，也不能替代�
 
 ## 三、默认教学循环
 
-1. 读取 `current_solution_step_id`、`current_solution_question_id`、当前开放问题和最近回答，定位 Solution 中正在执行的题目步骤与预设问题。
+1. 读取唯一运行时游标 `current_strategy_node_id`、当前开放问题和最近回答；再由策略节点引用推导对应的 Solution 步骤与预设问题。
 2. 判断学生是否已经满足当前预设问题的 `answer_checkpoints`，以及当前步骤还有什么内容未完成。
 3. 未完成时，从当前步骤的 `tutor_questions` 中选择最能暴露思维断点、又只跨越一个合理认知台阶的问题；每轮原则上只提出一个主要问题。
 4. 收到回答后，依据 `expected_answer` 和 `answer_checkpoints` 判断有效部分与缺口，再决定推进、追问、使用 `hint_ladder`、局部讲解或回到前一步。

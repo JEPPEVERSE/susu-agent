@@ -13,9 +13,7 @@ from main import (
     build_tutor_input,
     persist_conversation_turn,
     print_current_runtime_state,
-    update_teaching_state,
 )
-from susu_agent.agents.teaching_state_updater import TeachingStateUpdate
 from susu_agent.lesson_plan_loader import load_lesson_plan
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
 from susu_agent.schemas.solution import Solution, SolutionStep, SolveOutcome, TutorQuestion
@@ -124,8 +122,9 @@ class MainRuntimeStateTests(unittest.TestCase):
         self.assertIn("current_teaching_state:", displayed_text)
         self.assertIn('"schema_version": 1', displayed_text)
 
-    @patch("main.Runner.run", new_callable=AsyncMock)
-    def test_teacher_response_triggers_state_update(self, mock_run: AsyncMock) -> None:
+    def legacy_teacher_response_triggers_state_update(self) -> None:
+        """v0.1 状态更新入口的历史场景，不进入当前测试集。"""
+        mock_run = AsyncMock()
         mock_run.return_value = SimpleNamespace(
             final_output=TeachingStateUpdate(
                 stage="execute",
@@ -190,8 +189,11 @@ class MainRuntimeStateTests(unittest.TestCase):
         self.assertIn("<teaching_context>", context_input)
         self.assertIn('<lesson_plan_context subject="math"', context_input)
         self.assertIn('step_id="S1"', context_input)
-        self.assertIn("一、总纲：解题是在结构中逐步消除不确定性", context_input)
-        self.assertNotIn("F7：原题检验与完整表达", context_input)
+        self.assertIn(
+            "一、总纲：稳定解题是对题目系统进行降维、控制与闭环",
+            context_input,
+        )
+        self.assertNotIn("F8 即时检查与原题闭环", context_input)
         self.assertIn('"lesson_plan": {', context_input)
         self.assertIn('"solution": {', context_input)
         self.assertIn('"solution_step_id": "step_0"', context_input)
@@ -200,15 +202,8 @@ class MainRuntimeStateTests(unittest.TestCase):
         self.assertIn("previous question", context_input)
         self.assertNotIn("tool message", context_input)
         self.assertEqual(tutor_turn.solution.goal, "完成题目")
-        self.assertEqual(
-            repository.state["teaching_progress"]["current_solution_step_id"],
-            "step_0",
-        )
-        self.assertEqual(
-            repository.state["teaching_progress"][
-                "current_solution_question_id"
-            ],
-            "question_0",
+        self.assertNotIn(
+            "current_solution_step_id", repository.state["teaching_progress"]
         )
 
         asyncio.run(

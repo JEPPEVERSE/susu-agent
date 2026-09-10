@@ -19,6 +19,7 @@ class TutorQuestion(StrictModel):
 
     question_id: str = Field(pattern=r"^question_[0-9]+$", max_length=100)
     question: str = Field(min_length=1, max_length=500)
+    difficulty: Literal["foundation", "standard", "advanced"] = "standard"
     teaching_goal: str = Field(min_length=1, max_length=300)
     expected_answer: str = Field(min_length=1, max_length=600)
     answer_checkpoints: list[str] = Field(default_factory=list, max_length=5)

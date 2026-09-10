@@ -39,6 +39,14 @@ flowchart LR
 
 更详细的设计说明见 [v0.2 架构文档](docs/v0.2-architecture.md)。
 
+### StudentModel v3
+
+StudentModel v3 保存年级、班级、学校等身份信息，以及学习风格、表达偏好和六个学科的独立档案。数学、语文、英语、物理、化学、生物分别维护学科水平有限状态和知识点图谱。
+
+学科水平采用 `unassessed -> foundation -> developing -> proficient -> advanced`。Solution 中的候选问题同时标注 `foundation`、`standard` 或 `advanced`；代码在 TeachingPlanner 运行前选择适合当前水平的入口。高水平学生会跳过基础问题直接进入核心问题，基础问题只保留为后续补救分支。
+
+成绩历史、高考目标分数和目标院校已有结构化扩展位置。详细字段和迁移规则见 [StudentModel v3 文档](docs/student-model-v3.md)。
+
 ## v0.2 的关键约束
 
 ### 题目状态由代码管理
@@ -83,6 +91,10 @@ Agent 输出会依次经过：
 
 格式或契约不合法时，系统可将具体错误反馈给对应 Agent，进行有限次数的自动修复。未通过校验的表达不会展示给学生，也不会写入状态。
 
+TeachingState v7 只保存一个执行游标 `current_strategy_node_id`。Solution 步骤、候选问题和教案步骤均由该节点引用即时推导，不再保存容易互相漂移的重复游标，也不再内嵌 StudentModel。每个开放问题会登记目标检查点；代码跨轮累积已满足检查点，并根据策略边决定下一节点。单节点连续三次未完成后，运行时强制沿 `correct` 分支退出该节点，避免同一个问题无限循环。
+
+表达层只输出 `feedback` 和唯一的 `open_question`，最终学生回复由代码统一拼接。这样问题文本无需由模型复制两次，也不会因标点、空格或 LaTeX 格式差异导致整轮失败。
+
 ## 快速开始
 
 ### 1. 创建虚拟环境
@@ -123,6 +135,14 @@ OPENAI_AGENTS_DISABLE_TRACING=true
 ```
 
 DeepSeek 不使用原生 JSON Schema 响应格式；项目会自动切换为“JSON 文本输出 + 本地 Pydantic 校验”。
+
+仓库提供了一个中等偏上、偏爱数学且偏好专业简洁讲解的测试学生。首次使用时运行：
+
+```powershell
+& .\.venv\Scripts\python.exe .\scripts\create_test_student.py --student-id v02_test_student
+```
+
+并在 `.env` 中设置 `STUDENT_ID=v02_test_student`。StudentModel 的当前文档与历次快照均保存在 `data/sessions.db`，同一学生的并发更新由模型版本乐观锁保护。
 
 ### 3. 启动网页测试界面
 
@@ -230,7 +250,7 @@ susuAgent/
 
 ## 状态迁移与调试
 
-TeachingState 当前使用 schema version 6。旧状态会自动迁移；从 v5 升级时会保留可迁移的 Solution，但旧 VerificationReport 和 TeachingStrategy 会失效，并在下一次进入会话时按新契约重新生成。
+TeachingState 当前使用 schema version 7。旧状态会自动迁移；从 v5 升级时会保留可迁移的 Solution，但旧 VerificationReport 和 TeachingStrategy 会失效。v6 策略图也会失效并在下一次进入会话时重建，因为旧图不具备检查点累积和有限重试契约。
 
 常见错误含义：
 

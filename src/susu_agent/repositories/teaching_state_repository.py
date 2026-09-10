@@ -12,6 +12,7 @@ from susu_agent.lesson_plan_loader import LessonPlanBundle, LessonPlanLoader
 from susu_agent.schemas.solution import Solution
 from susu_agent.schemas.teaching_state import validate_teaching_state
 from susu_agent.schemas.v02 import LearningEvidence, TeachingStrategy, VerificationReport
+from susu_agent.teaching_runtime import validate_strategy_runtime_contract
 
 
 logger = logging.getLogger(__name__)
@@ -132,7 +133,7 @@ class TeachingStateRepository:
         ).load(subject)
         return {
             "session_id": session_id,
-            "schema_version": 6,
+            "schema_version": 7,
             "lesson_plan": TeachingStateRepository._lesson_plan_metadata(
                 selected_lesson_plan
             ),
@@ -143,26 +144,13 @@ class TeachingStateRepository:
             "open_question_history": [],
             "teaching_progress": {
                 "current_strategy_node_id": None,
-                "stage": "understand_task",
-                "current_lesson_plan_step_id": None,
-                "completed_lesson_plan_step_ids": [],
-                "lesson_plan_step_summary": "",
-                "current_solution_step_id": None,
-                "completed_solution_step_ids": [],
-                "solution_step_summary": "",
-                "current_solution_question_id": None,
-                "completed_solution_question_ids": [],
-                "hints_num": 0,
-                "confirmed_steps": [],
-                "next_teacher_action": "ask_question",
+                "completed_strategy_node_ids": [],
+                "satisfied_checkpoint_ids": [],
+                "attempts_by_node": {},
+                "hint_indices_by_node": {},
             },
-            "student_model": {"status": {}},
             "updated_at": now,
-            "memory_meta": {
-                "last_processed_message_id": None,
-                "last_compacted_message_id": None,
-                "rolling_summary": "",
-            },
+            "conversation_summary": "",
             "v02_meta": {
                 "architecture_version": "0.2",
                 "solution_revision": 0,
@@ -192,13 +180,15 @@ class TeachingStateRepository:
             state = self._upgrade_v3_state(state)
         elif schema_version == 4:
             state = self._upgrade_v4_state(state)
-        elif schema_version not in {5, 6}:
+        elif schema_version not in {5, 6, 7}:
             raise ValueError(
                 f"Unsupported teaching state schema_version: {schema_version!r}"
             )
 
         if state.get("schema_version") == 5:
             state = self._upgrade_v5_state(state)
+        if state.get("schema_version") == 6:
+            state = self._upgrade_v6_state(state)
 
         state["lesson_plan"] = self._lesson_plan_metadata(lesson_plan)
         return state
@@ -364,6 +354,109 @@ class TeachingStateRepository:
         return state
 
     @staticmethod
+    def _upgrade_v6_state(state: dict[str, Any]) -> dict[str, Any]:
+        """迁移到 v0.2 单一状态源：移除学生模型副本和派生游标。"""
+        # v6 策略没有检查点累积和有限重试契约。继续复用可能保留
+        # correct 自循环，因此只保留已验证解法，下一轮重新规划策略。
+        if state.get("teaching_strategy") is not None:
+            state["teaching_strategy"] = None
+            state["open_question_history"] = []
+            state.setdefault("teaching_progress", {})[
+                "current_strategy_node_id"
+            ] = None
+        strategy = state.get("teaching_strategy") or {}
+        nodes = strategy.get("nodes", []) if isinstance(strategy, dict) else []
+        node_by_id = {
+            node.get("node_id"): node
+            for node in nodes
+            if isinstance(node, dict) and node.get("node_id") is not None
+        }
+        nodes_by_question: dict[str, list[str]] = {}
+        for node_id, node in node_by_id.items():
+            question_id = node.get("solution_question_id")
+            if question_id is not None:
+                nodes_by_question.setdefault(question_id, []).append(node_id)
+
+        old_progress = state.get("teaching_progress", {})
+        current_node_id = old_progress.get("current_strategy_node_id")
+        completed_solution_steps = set(
+            old_progress.get("completed_solution_step_ids", [])
+        )
+        completed_solution_questions = set(
+            old_progress.get("completed_solution_question_ids", [])
+        )
+        completed_nodes = [
+            node_id
+            for node_id, node in node_by_id.items()
+            if (
+                node.get("solution_question_id") in completed_solution_questions
+                or (
+                    node.get("solution_question_id") is None
+                    and node.get("solution_step_id") in completed_solution_steps
+                )
+            )
+        ]
+
+        migrated_history: list[dict[str, Any]] = []
+        attempts_by_node: dict[str, int] = {}
+        for question in state.get("open_question_history", []):
+            solution_question_id = question.get("solution_question_id")
+            candidate_nodes = nodes_by_question.get(solution_question_id, [])
+            strategy_node_id = (
+                current_node_id
+                if current_node_id in candidate_nodes
+                else candidate_nodes[0] if candidate_nodes else None
+            )
+            old_assessment = question.get("agent_assessment", {})
+            status = question.get("status", "abandoned")
+            assessment = old_assessment.get("understanding", "not_answered")
+            assessment_reason = old_assessment.get("summary", "")
+            if status == "answered" and assessment == "not_answered":
+                assessment = "unclear"
+                assessment_reason = assessment_reason or "旧状态未记录明确判定。"
+            if status != "answered":
+                assessment = "not_answered"
+                assessment_reason = ""
+            checkpoint_count = len(
+                node_by_id.get(strategy_node_id, {}).get("answer_checkpoints", [])
+            )
+            migrated_history.append(
+                {
+                    "question_id": question["question_id"],
+                    "question": question["question"],
+                    "strategy_node_id": strategy_node_id,
+                    "solution_question_id": solution_question_id,
+                    "target_checkpoint_indices": list(range(checkpoint_count)),
+                    "status": status,
+                    "asked_at": question["asked_at"],
+                    "student_answer_summary": question.get("student_answer_summary"),
+                    "assessment": assessment,
+                    "assessment_reason": assessment_reason,
+                    "resolved_at": question.get("resolved_at"),
+                }
+            )
+            if status == "answered" and strategy_node_id is not None:
+                attempts_by_node[strategy_node_id] = (
+                    attempts_by_node.get(strategy_node_id, 0) + 1
+                )
+
+        state["open_question_history"] = migrated_history
+        state["teaching_progress"] = {
+            "current_strategy_node_id": current_node_id,
+            "completed_strategy_node_ids": completed_nodes,
+            "satisfied_checkpoint_ids": [],
+            "attempts_by_node": attempts_by_node,
+            "hint_indices_by_node": {},
+        }
+        state["conversation_summary"] = state.get("memory_meta", {}).get(
+            "rolling_summary", ""
+        )
+        state.pop("memory_meta", None)
+        state.pop("student_model", None)
+        state["schema_version"] = 7
+        return state
+
+    @staticmethod
     def _add_solution_fields(state: dict[str, Any]) -> None:
         state.setdefault("solution", None)
         progress = state.setdefault("teaching_progress", {})
@@ -490,8 +583,7 @@ class TeachingStateRepository:
                     "Teaching strategy requires Solution and VerificationReport artifacts."
                 )
             strategy = TeachingStrategy.model_validate(strategy_data)
-            if not strategy.nodes or strategy.initial_node_id is None:
-                raise ValueError("A runnable teaching strategy requires an initial node.")
+            validate_strategy_runtime_contract(strategy)
             known_steps = {step.solution_step_id for step in solution.steps}
             question_owner = {
                 question.question_id: step.solution_step_id
@@ -523,25 +615,24 @@ class TeachingStateRepository:
             current_node_id = state.get("teaching_progress", {}).get(
                 "current_strategy_node_id"
             )
-            if current_node_id is not None and current_node_id not in {
-                node.node_id for node in strategy.nodes
-            }:
+            known_node_ids = {node.node_id for node in strategy.nodes}
+            if current_node_id is not None and current_node_id not in known_node_ids:
                 raise ValueError("Teaching state references an unknown strategy node.")
-            if current_node_id is not None:
-                current_node = next(
-                    node for node in strategy.nodes if node.node_id == current_node_id
+            progress = state.get("teaching_progress", {})
+            unknown_completed_nodes = set(
+                progress.get("completed_strategy_node_ids", [])
+            ) - known_node_ids
+            if unknown_completed_nodes:
+                raise ValueError("Teaching state completed unknown strategy nodes.")
+            for checkpoint_id in progress.get("satisfied_checkpoint_ids", []):
+                node_id, raw_index = checkpoint_id.split(":checkpoint_", 1)
+                node = next(
+                    (item for item in strategy.nodes if item.node_id == node_id),
+                    None,
                 )
-                progress = state.get("teaching_progress", {})
-                if progress.get("current_solution_step_id") != current_node.solution_step_id:
+                if node is None or int(raw_index) >= len(node.answer_checkpoints):
                     raise ValueError(
-                        "Current strategy node and Solution step cursor are inconsistent."
-                    )
-                if (
-                    progress.get("current_solution_question_id")
-                    != current_node.solution_question_id
-                ):
-                    raise ValueError(
-                        "Current strategy node and Solution question cursor are inconsistent."
+                        "Teaching state references an unknown strategy checkpoint."
                     )
         for item in state.get("learning_evidence", []):
             LearningEvidence.model_validate(item)
@@ -556,28 +647,6 @@ class TeachingStateRepository:
             raise ValueError("Teaching state lesson_plan metadata is stale.")
 
         allowed_step_ids = set(lesson_plan.step_ids)
-        progress = state.get("teaching_progress", {})
-        referenced_step_ids = [
-            progress.get("current_lesson_plan_step_id"),
-            *progress.get("completed_lesson_plan_step_ids", []),
-            *(
-                question.get("lesson_plan_step_id")
-                for question in state.get("open_question_history", [])
-            ),
-        ]
-        unknown_step_ids = sorted(
-            {
-                step_id
-                for step_id in referenced_step_ids
-                if step_id is not None and step_id not in allowed_step_ids
-            }
-        )
-        if unknown_step_ids:
-            raise ValueError(
-                f"Teaching state references unknown lesson plan steps: "
-                f"{unknown_step_ids!r}."
-            )
-
         solution_data = state.get("solution")
         if solution_data is None:
             solution_step_ids: set[str] = set()
@@ -605,30 +674,7 @@ class TeachingStateRepository:
                 for question in step.tutor_questions
             }
 
-        referenced_solution_step_ids = [
-            progress.get("current_solution_step_id"),
-            *progress.get("completed_solution_step_ids", []),
-            *(
-                question.get("solution_step_id")
-                for question in state.get("open_question_history", [])
-            ),
-        ]
-        unknown_solution_step_ids = sorted(
-            {
-                step_id
-                for step_id in referenced_solution_step_ids
-                if step_id is not None and step_id not in solution_step_ids
-            }
-        )
-        if unknown_solution_step_ids:
-            raise ValueError(
-                "Teaching state references unknown Solution steps: "
-                f"{unknown_solution_step_ids!r}."
-            )
-
         referenced_solution_question_ids = [
-            progress.get("current_solution_question_id"),
-            *progress.get("completed_solution_question_ids", []),
             *(
                 question.get("solution_question_id")
                 for question in state.get("open_question_history", [])

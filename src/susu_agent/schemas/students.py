@@ -1,4 +1,4 @@
-"""学生模型的 JSON Schema。"""
+"""StudentModel v3 的结构化 Schema 与有限状态定义。"""
 
 from typing import Any
 
@@ -268,3 +268,14 @@ STUDENT_MODEL_VALIDATOR = Draft202012Validator(
 def validate_student_model(student_model: dict[str, Any]) -> None:
     """校验学生模型，不符合 schema 时抛出 ValidationError。"""
     STUDENT_MODEL_VALIDATOR.validate(student_model)
+
+
+# v3 是当前公开契约；上方 v2 定义暂留在本文件中，仅用于阅读旧数据结构。
+from susu_agent.schemas.students_v3 import (  # noqa: E402,F401
+    SUBJECTS as SUBJECTS,
+    STUDENT_MODEL_SCHEMA as STUDENT_MODEL_SCHEMA,
+    STUDENT_MODEL_VALIDATOR as STUDENT_MODEL_VALIDATOR,
+    SubjectCode as SubjectCode,
+    SubjectLevelState as SubjectLevelState,
+    validate_student_model as validate_student_model,
+)

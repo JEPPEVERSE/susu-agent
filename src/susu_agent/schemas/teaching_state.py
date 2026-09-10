@@ -23,7 +23,7 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
 
         "schema_version": {
             "type": "integer",
-            "const": 6,
+            "const": 7,
         },
 
         "lesson_plan": {
@@ -169,28 +169,19 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                         "minLength": 1,
                         "maxLength": 1_000,
                     },
-                    "stage": {
-                        "type": "string",
-                        "enum": [
-                            "understand_task",
-                            "recall_knowledge",
-                            "make_plan",
-                            "execute",
-                            "verify",
-                            "complete",
-                        ],
-                    },
-                    "lesson_plan_step_id": {
-                        "type": ["string", "null"],
-                        "maxLength": 200,
-                    },
-                    "solution_step_id": {
+                    "strategy_node_id": {
                         "type": ["string", "null"],
                         "maxLength": 100,
                     },
                     "solution_question_id": {
                         "type": ["string", "null"],
                         "maxLength": 100,
+                    },
+                    "target_checkpoint_indices": {
+                        "type": "array",
+                        "maxItems": 10,
+                        "uniqueItems": True,
+                        "items": {"type": "integer", "minimum": 0},
                     },
                     "status": {
                         "type": "string",
@@ -204,27 +195,21 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                         "type": ["string", "null"],
                         "maxLength": 500,
                     },
-                    "agent_assessment": {
-                        "type": "object",
-                        "properties": {
-                            "understanding": {
-                                "type": "string",
-                                "enum": [
-                                    "not_answered",
-                                    "no_idea",
-                                    "incorrect",
-                                    "partially_correct",
-                                    "correct",
-                                    "unclear",
-                                ],
-                            },
-                            "summary": {
-                                "type": "string",
-                                "maxLength": 500,
-                            },
-                        },
-                        "required": ["understanding", "summary"],
-                        "additionalProperties": False,
+                    "assessment": {
+                        "type": "string",
+                        "enum": [
+                            "not_answered",
+                            "no_idea",
+                            "incorrect",
+                            "partially_correct",
+                            "correct",
+                            "unclear",
+                            "student_requests_solution"
+                        ],
+                    },
+                    "assessment_reason": {
+                        "type": "string",
+                        "maxLength": 500,
                     },
                     "resolved_at": {
                         "type": ["string", "null"],
@@ -234,14 +219,15 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                 "required": [
                     "question_id",
                     "question",
-                    "stage",
-                    "lesson_plan_step_id",
-                    "solution_step_id",
+                    "strategy_node_id",
                     "solution_question_id",
+                    "target_checkpoint_indices",
                     "status",
                     "asked_at",
                     "student_answer_summary",
-                    "agent_assessment",
+                    "assessment",
+                    "assessment_reason",
+                    "resolved_at",
                 ],
                 "additionalProperties": False,
             },
@@ -254,175 +240,58 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                     "type": ["string", "null"],
                     "maxLength": 100,
                 },
-                "stage": {
-                    "type": "string",
-                    "enum": [
-                        "understand_task",
-                        "recall_knowledge",
-                        "make_plan",
-                        "execute",
-                        "verify",
-                        "complete",
-                    ],
-                },
-                "current_lesson_plan_step_id": {
-                    "type": ["string", "null"],
-                    "maxLength": 200,
-                },
-                "completed_lesson_plan_step_ids": {
-                    "type": "array",
-                    "maxItems": 50,
-                    "uniqueItems": True,
-                    "items": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 200,
-                    },
-                },
-                "lesson_plan_step_summary": {
-                    "type": "string",
-                    "maxLength": 1_000,
-                },
-                "current_solution_step_id": {
-                    "type": ["string", "null"],
-                    "maxLength": 100,
-                },
-                "completed_solution_step_ids": {
-                    "type": "array",
-                    "maxItems": 30,
-                    "uniqueItems": True,
-                    "items": {
-                        "type": "string",
-                        "pattern": "^step_[0-9]+$",
-                        "maxLength": 100,
-                    },
-                },
-                "solution_step_summary": {
-                    "type": "string",
-                    "maxLength": 1_000,
-                },
-                "current_solution_question_id": {
-                    "type": ["string", "null"],
-                    "maxLength": 100,
-                },
-                "completed_solution_question_ids": {
+                "completed_strategy_node_ids": {
                     "type": "array",
                     "maxItems": 100,
                     "uniqueItems": True,
                     "items": {
                         "type": "string",
-                        "pattern": "^question_[0-9]+$",
+                        "pattern": "^teach_[0-9]+$",
                         "maxLength": 100,
                     },
                 },
-                "hints_num": {
-                    "type": "integer",
-                    "minimum": 0,
-                },
-                "hint_level": {
-                    "type": "string",
-                    "enum": ["none", "light", "medium", "strong"],
-                },
-                "confirmed_steps": {
+                "satisfied_checkpoint_ids": {
                     "type": "array",
-                    "maxItems": 20,
+                    "maxItems": 1_000,
+                    "uniqueItems": True,
                     "items": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 100,
+                        "pattern": "^teach_[0-9]+:checkpoint_[0-9]+$",
+                        "maxLength": 150,
                     },
                 },
-                "open_question": {
-                    "type": ["string", "null"],
-                    "maxLength": 1_000,
-                },
-                "next_teacher_action": {
-                    "type": "string",
-                    "enum": [
-                        "ask_question",
-                        "give_hint",
-                        "explain",
-                        "verify_answer",
-                    ],
-                },
-                "summary": {"type": "string", "maxLength": 1_000},
-            },
-            "required": [
-                "current_strategy_node_id",
-                "stage",
-                "current_lesson_plan_step_id",
-                "completed_lesson_plan_step_ids",
-                "lesson_plan_step_summary",
-                "current_solution_step_id",
-                "completed_solution_step_ids",
-                "solution_step_summary",
-                "current_solution_question_id",
-                "completed_solution_question_ids",
-                "hints_num",
-                "confirmed_steps",
-                "next_teacher_action",
-            ],
-            "additionalProperties": False,
-        },
-        "student_model": {
-            "type": "object",
-            "properties": {
-                "status": {
+                "attempts_by_node": {
                     "type": "object",
-                    "properties": {
-                        "known_concepts": {
-                            "type": "array",
-                            "maxItems": 20,
-                            "items": {"type": "string", "maxLength": 100},
-                        },
-                        "recent_attempts": {
-                            "type": "array",
-                            "maxItems": 3,
-                            "items": {"type": "string", "maxLength": 500},
-                        },
-                        "current_step_confidence": {
-                            "type": "string",
-                            "enum": ["unknown", "low", "medium", "high"],
-                        },
-                        "main_misconceptions": {
-                            "type": "array",
-                            "maxItems": 10,
-                            "items": {"type": "string", "maxLength": 200},
-                        },
+                    "patternProperties": {
+                        "^teach_[0-9]+$": {"type": "integer", "minimum": 0}
+                    },
+                    "additionalProperties": False,
+                },
+                "hint_indices_by_node": {
+                    "type": "object",
+                    "patternProperties": {
+                        "^teach_[0-9]+$": {"type": "integer", "minimum": 0}
                     },
                     "additionalProperties": False,
                 },
             },
+            "required": [
+                "current_strategy_node_id",
+                "completed_strategy_node_ids",
+                "satisfied_checkpoint_ids",
+                "attempts_by_node",
+                "hint_indices_by_node",
+            ],
             "additionalProperties": False,
         },
-
         "updated_at": {
             "type": "string",
             "format": "date-time",
         },
 
-        "memory_meta": {
-            "type": "object",
-            "properties": {
-                "last_processed_message_id": {
-                    "type": ["string", "null"],
-                    "maxLength": 200,
-                },
-                "last_compacted_message_id": {
-                    "type": ["string", "null"],
-                    "maxLength": 200,
-                },
-                "rolling_summary": {
-                    "type": "string",
-                    "maxLength": 2_000,
-                },
-            },
-            "required": [
-                "last_processed_message_id",
-                "last_compacted_message_id",
-                "rolling_summary",
-            ],
-            "additionalProperties": False,
+        "conversation_summary": {
+            "type": "string",
+            "maxLength": 2_000,
         },
         "v02_meta": {
             "type": "object",
@@ -463,9 +332,8 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
         "learning_evidence",
         "open_question_history",
         "teaching_progress",
-        "student_model",
         "updated_at",
-        "memory_meta",
+        "conversation_summary",
         "v02_meta",
         "personal_ai",
     ],
@@ -494,31 +362,22 @@ def _validate_open_question_invariants(state: dict[str, Any]) -> None:
     if len(open_questions) > 1:
         raise ValueError("Teaching state cannot contain more than one open question.")
 
-    progress_question = state["teaching_progress"].get("open_question")
-    if open_questions:
-        if progress_question != open_questions[0]["question"]:
-            raise ValueError(
-                "teaching_progress.open_question must match the open history item."
-            )
-    elif progress_question is not None:
-        raise ValueError(
-            "teaching_progress.open_question requires an open history item."
-        )
-
     for item in history:
         status = item["status"]
-        understanding = item["agent_assessment"]["understanding"]
+        assessment = item["assessment"]
         if status == "open":
             if (
                 item["student_answer_summary"] is not None
-                or understanding != "not_answered"
+                or assessment != "not_answered"
+                or item["assessment_reason"]
                 or item.get("resolved_at") is not None
             ):
                 raise ValueError("An open question cannot contain resolved-answer data.")
         elif status == "answered":
             if (
                 item["student_answer_summary"] is None
-                or understanding == "not_answered"
+                or assessment == "not_answered"
+                or not item["assessment_reason"]
                 or item.get("resolved_at") is None
             ):
                 raise ValueError("An answered question requires answer and resolution data.")

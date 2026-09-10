@@ -79,10 +79,7 @@ class ContextBuilder:
             "solution": state.get("solution"),
             "original_problem": self._build_problem_context(state),
             "teaching_progress": state.get("teaching_progress", {}),
-            "student_session_status": state.get("student_model", {}).get(
-                "status", {}
-            ),
-            "rolling_summary": state["memory_meta"]["rolling_summary"],
+            "conversation_summary": state.get("conversation_summary", ""),
             "active_questions": active_questions,
             "recent_question_history": resolved_questions[
                 -self._recent_question_limit :
@@ -132,11 +129,8 @@ class ContextBuilder:
         ):
             raise ValueError("Lesson plan snapshot does not match teaching_state.")
 
-        teaching_progress = teaching_state.get("teaching_progress", {})
-        current_step_id = (
-            teaching_progress.get("current_lesson_plan_step_id")
-            if isinstance(teaching_progress, Mapping)
-            else None
+        current_step_id = self._resolve_current_lesson_plan_step_id(
+            teaching_state
         )
         context_selection = selected_lesson_plan.select_context(current_step_id)
         payload = self.build_payload(
@@ -169,3 +163,49 @@ class ContextBuilder:
         original_problem = dict(teaching_state.get("original_problem", {}))
         original_problem.pop("reference_answer", None)
         return original_problem
+
+    @staticmethod
+    def _resolve_current_lesson_plan_step_id(
+        teaching_state: Mapping[str, Any],
+    ) -> str | None:
+        """从规范化策略游标推导教案步骤，避免保存重复游标。"""
+        progress = teaching_state.get("teaching_progress", {})
+        strategy = teaching_state.get("teaching_strategy", {})
+        solution = teaching_state.get("solution", {})
+        if not all(
+            isinstance(value, Mapping)
+            for value in (progress, strategy, solution)
+        ):
+            return None
+
+        current_node_id = progress.get("current_strategy_node_id")
+        nodes = strategy.get("nodes", [])
+        steps = solution.get("steps", [])
+        if not isinstance(nodes, list) or not isinstance(steps, list):
+            return None
+
+        current_node = next(
+            (
+                node
+                for node in nodes
+                if isinstance(node, Mapping)
+                and node.get("node_id") == current_node_id
+            ),
+            None,
+        )
+        if current_node is None:
+            return None
+        solution_step_id = current_node.get("solution_step_id")
+        current_step = next(
+            (
+                step
+                for step in steps
+                if isinstance(step, Mapping)
+                and step.get("solution_step_id") == solution_step_id
+            ),
+            None,
+        )
+        if current_step is None:
+            return None
+        lesson_plan_step_id = current_step.get("lesson_plan_step_id")
+        return lesson_plan_step_id if isinstance(lesson_plan_step_id, str) else None

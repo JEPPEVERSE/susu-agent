@@ -4,11 +4,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from susu_agent.agents.teaching_state_updater import (
-    TeachingStateUpdate,
-    apply_teaching_state_update,
-    validate_teaching_execution_against_state,
-)
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
 from susu_agent.schemas.solution import Solution, SolutionStep, TutorQuestion
 from susu_agent.schemas.v02 import (
@@ -16,10 +11,163 @@ from susu_agent.schemas.v02 import (
     TeachingExecution,
     TeachingStrategy,
     TeachingStrategyNode,
+    TeachingTransition,
+)
+from susu_agent.teaching_runtime import (
+    MAX_NODE_ATTEMPTS,
+    apply_teaching_execution,
+    resolve_execution_decision,
+    validate_teaching_execution_against_state as validate_v02_execution,
 )
 
 
-class TeachingStateUpdateTests(unittest.TestCase):
+def _transitions(node_id: str, next_node_id: str | None):
+    return [
+        TeachingTransition(condition="correct", next_node_id=next_node_id, action="advance"),
+        TeachingTransition(condition="partially_correct", next_node_id=node_id, action="give_hint"),
+        TeachingTransition(condition="incorrect", next_node_id=node_id, action="retry"),
+        TeachingTransition(condition="no_idea", next_node_id=node_id, action="give_hint"),
+        TeachingTransition(condition="unclear", next_node_id=node_id, action="retry"),
+        TeachingTransition(condition="student_requests_solution", action="complete"),
+    ]
+
+
+def make_runtime_state() -> dict[str, object]:
+    state = TeachingStateRepository.create_initial_state("problem_0")
+    solution = Solution(
+        goal="完成测试题",
+        strategy_summary="先识别两个条件，再继续。",
+        steps=[
+            SolutionStep(
+                solution_step_id="step_0", lesson_plan_step_id="S1",
+                title="明确目标", goal="识别条件", derivation="识别目标与范围。",
+                result="条件明确。", concept_ids=["problem_identification"],
+                tutor_questions=[TutorQuestion(
+                    question_id="question_0", question="目标和范围是什么？",
+                    teaching_goal="识别条件", expected_answer="目标与范围",
+                )],
+            ),
+            SolutionStep(
+                solution_step_id="step_1", lesson_plan_step_id="S3",
+                title="继续推导", goal="建立关系", derivation="建立关系。",
+                result="关系成立。", concept_ids=["equation_setup"],
+                tutor_questions=[TutorQuestion(
+                    question_id="question_1", question="下一步关系是什么？",
+                    teaching_goal="建立关系", expected_answer="关系式",
+                )],
+            ),
+        ],
+        final_answer="测试答案",
+    )
+    strategy = TeachingStrategy(
+        strategy_id="strategy_0", summary="测试策略", initial_node_id="teach_0",
+        nodes=[
+            TeachingStrategyNode(
+                node_id="teach_0", solution_step_id="step_0",
+                solution_question_id="question_0", goal="识别条件",
+                teaching_action="ask_question", prompt_intent="询问目标与范围",
+                answer_checkpoints=["目标", "范围"],
+                hint_ladder=["先看最后一句", "再看定义域"],
+                disclosure_boundary="不透露答案",
+                transitions=_transitions("teach_0", "teach_1"),
+            ),
+            TeachingStrategyNode(
+                node_id="teach_1", solution_step_id="step_1",
+                solution_question_id="question_1", goal="建立关系",
+                teaching_action="ask_question", prompt_intent="询问关系",
+                answer_checkpoints=["关系式"], disclosure_boundary="不透露答案",
+                transitions=_transitions("teach_1", None),
+            ),
+        ],
+    )
+    state["original_problem"] = {
+        "problem_statement": "测试题", "status": "solved",
+        "clarification_questions": [], "clarification_context": [],
+    }
+    state["solution"] = solution.model_dump(mode="json")
+    state["teaching_strategy"] = strategy.model_dump(mode="json")
+    state["teaching_progress"]["current_strategy_node_id"] = "teach_0"
+    return state
+
+
+class V02TeachingRuntimeTests(unittest.TestCase):
+    def test_checkpoints_accumulate_across_answers_and_advance(self) -> None:
+        state = apply_teaching_execution(
+            make_runtime_state(),
+            TeachingExecution(
+                assessment="not_applicable",
+                state_delta=ExecutionStateDelta(
+                    open_question="目标和范围是什么？",
+                    open_question_target_checkpoint_indices=[0, 1],
+                ),
+            ),
+        )
+        state = apply_teaching_execution(
+            state,
+            TeachingExecution(
+                feedback="目标正确。", assessment="partially_correct",
+                state_delta=ExecutionStateDelta(
+                    answered_open_question_summary="学生答对目标。",
+                    answered_open_question_feedback="范围尚未回答。",
+                    satisfied_checkpoint_indices_to_add=[0],
+                    open_question="再说范围是什么？",
+                    open_question_target_checkpoint_indices=[1],
+                ),
+            ),
+        )
+        execution = TeachingExecution(
+            feedback="范围正确。", assessment="correct",
+            state_delta=ExecutionStateDelta(
+                answered_open_question_summary="学生答对范围。",
+                answered_open_question_feedback="当前节点检查点均满足。",
+                open_question="下一步关系是什么？",
+                open_question_target_checkpoint_indices=[0],
+            ),
+        )
+        self.assertEqual(resolve_execution_decision(state, execution).target_node_id, "teach_1")
+        state = apply_teaching_execution(state, execution)
+        self.assertEqual(state["teaching_progress"]["current_strategy_node_id"], "teach_1")
+        self.assertEqual(
+            state["teaching_progress"]["satisfied_checkpoint_ids"],
+            ["teach_0:checkpoint_0", "teach_0:checkpoint_1"],
+        )
+
+    def test_retry_limit_forces_advance(self) -> None:
+        state = make_runtime_state()
+        state["teaching_progress"]["attempts_by_node"]["teach_0"] = MAX_NODE_ATTEMPTS - 1
+        state["open_question_history"] = [{
+            "question_id": "question_0", "question": "范围是什么？",
+            "strategy_node_id": "teach_0", "solution_question_id": "question_0",
+            "target_checkpoint_indices": [1], "status": "open",
+            "asked_at": state["updated_at"], "student_answer_summary": None,
+            "assessment": "not_answered", "assessment_reason": "", "resolved_at": None,
+        }]
+        execution = TeachingExecution(
+            feedback="我补充范围。", assessment="incorrect",
+            state_delta=ExecutionStateDelta(
+                answered_open_question_summary="仍未答出范围。",
+                answered_open_question_feedback="达到重试上限。",
+                open_question="下一步关系是什么？",
+                open_question_target_checkpoint_indices=[0],
+            ),
+        )
+        decision = validate_v02_execution(state, execution)
+        self.assertTrue(decision.forced_advance)
+        self.assertEqual(decision.target_node_id, "teach_1")
+
+    def test_invalid_checkpoint_target_is_rejected(self) -> None:
+        execution = TeachingExecution(
+            feedback="继续。", assessment="not_applicable",
+            state_delta=ExecutionStateDelta(
+                open_question="继续。", open_question_target_checkpoint_indices=[99]
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "checkpoint targets"):
+            validate_v02_execution(make_runtime_state(), execution)
+
+
+class LegacyTeachingStateUpdateExamples:
+    """保留旧场景作迁移参考；不属于当前可执行测试集。"""
     def setUp(self) -> None:
         self.state = TeachingStateRepository.create_initial_state("problem_0")
 
@@ -200,7 +348,7 @@ class TeachingStateUpdateTests(unittest.TestCase):
 
     def test_answer_cannot_be_attached_without_an_open_question(self) -> None:
         execution = TeachingExecution(
-            response="题目要求什么？",
+            feedback="",
             assessment="correct",
             state_delta=ExecutionStateDelta(
                 answered_open_question_summary="学生给出了回答。",
@@ -231,7 +379,7 @@ class TeachingStateUpdateTests(unittest.TestCase):
         ).model_dump(mode="json")
         self.state["teaching_progress"]["current_strategy_node_id"] = "teach_0"
         execution = TeachingExecution(
-            response="余弦函数是递增还是递减？",
+            feedback="",
             assessment="not_applicable",
             state_delta=ExecutionStateDelta(open_question="余弦函数是递增还是递减？"),
         )

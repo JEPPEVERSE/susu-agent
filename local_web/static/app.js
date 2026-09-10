@@ -191,8 +191,13 @@ function updateRuntime(payload, replaceMessages = false) {
   elements.planVersion.textContent = state.lesson_plan?.lesson_plan_version || "—";
   elements.problemStatus.textContent = runtime.problem_status || "pending";
   elements.strategyNode.textContent = progress.current_strategy_node_id || "尚未规划";
-  elements.currentStep.textContent = progress.current_solution_step_id || "尚未求解";
-  elements.teachingStage.textContent = progress.stage || "—";
+  const currentNode = (state.teaching_strategy?.nodes || []).find(
+    node => node.node_id === progress.current_strategy_node_id
+  );
+  elements.currentStep.textContent = currentNode?.solution_step_id || "尚未求解";
+  elements.teachingStage.textContent = currentNode?.teaching_action || (
+    progress.current_strategy_node_id === null && state.teaching_strategy ? "complete" : "—"
+  );
   elements.rawState.textContent = JSON.stringify(state, null, 2);
   elements.rawSolution.textContent = JSON.stringify(state.solution, null, 2);
   elements.rawVerification.textContent = JSON.stringify(state.verification_report, null, 2);
