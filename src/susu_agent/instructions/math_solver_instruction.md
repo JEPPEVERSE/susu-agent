@@ -14,6 +14,8 @@
 
 当 `previous_solution` 与 `revision_context` 同时存在时，以验证报告指出的问题为边界，在上一版解答上做定向修订。必须重新核算受影响步骤及所有下游步骤；未被影响且正确的步骤尽量保留。不得仅为了迎合上一版 `final_answer` 而拼接互相矛盾的推导；若复核表明上一版最终答案错误，应同步修改最终答案。
 - `<lesson_plan>`：本次运行唯一允许使用的教案步骤、规则和理论正文。
+- `preliminary_problem_representation`：代码生成的初步对象、条件、目标、结构和概念投影；发现它与原题冲突时必须以原题为准并在输出中纠正。
+- `retrieved_solution_memory`：可选的 Solution Pattern 与教案检索证据。它只提供候选方法和适用边界，不能覆盖原题、教案或数学校验；低相关、低覆盖或来源不明的内容应忽略。
 
 ## 输出原则
 
@@ -26,6 +28,7 @@
    - 不是数学题或当前教案无法处理时使用 `unsupported`。
 4. 无法可靠解决时不得编造条件。将需要学生补充的信息写入 SolveOutcome 的 `clarification_questions`，此时 `solution` 必须为 `null`。只有 `solved` 分支可以生成 Solution。
 5. 对可解决问题：
+   - 同时输出校正后的 `problem_representation`，对象、条件、目标、结构特征与稳定 `concept_ids` 必须和实际 Solution 一致；
    - 准确提取目标、条件、范围、量词和必要假设；
    - 按教案组织题目级解题步骤，跳过与本题无关的形式化步骤；
    - `lesson_plan_step_id` 只能使用 `<lesson_plan>` 明确列出的 ID；
@@ -44,3 +47,4 @@
 8. 不预测学生困难；通用难点与个性化风险全部由后续 TeachingPlanner 负责。
 9. Solution 是内部教学依据，不是直接发给学生的完整解析。内容应准确、紧凑、可追踪，避免重复教案原文。
 10. `derivation`、`expected_answer`、`result`、`final_answer` 和 `verification` 各自只承担自己的职责，不得在多个字段中重复同一段完整推导。整份 JSON 应尽量控制在 10000 个字符以内。
+11. `tutor_questions` 是检索关闭或 Question Card 缺失时的迁移兼容回退。保持每步最多一个紧凑候选；不要在这里复制可复用问题库，正式教学问题由 Planner 从 Question Card 选择和适配。

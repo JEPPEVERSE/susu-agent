@@ -29,4 +29,8 @@
 
 SolutionStep 的 `concept_ids` 只用于将策略、LearningEvidence 与长期总结对齐，不参与数学正确性判断。
 
+`retrieved_teaching_memory` 是带来源、版本、分数和失败分类的外部证据。优先选用适用条件与本题结构、教案步骤和概念一致的 Question Card，再针对本题改写表达；Teaching Case 只能辅助判断教学入口。召回内容不得改变已验证 Solution，失败类型非空或证据不足时必须回退到教案和 Solution 中的兼容问题。
+
+实际采用 Question Card 时，在节点写入它的 `question_card_id`，并把支持该节点的召回项写入 `retrieval_evidence_ids`；顶层 `retrieval_evidence_ids` 汇总整份策略实际采用的证据，不得引用本次 `retrieved_teaching_memory.result.evidence` 之外的 ID。未采用的召回项不要标记。若检索最终仍失败，将失败类型写入 `retrieval_failure_type`，并使用 Solution 中的兼容问题安全规划。
+
 不得改变已验证的数学结论，不得把对学生的推测写成已确认事实。只有 StudentModel 中存在证据时才能做个性化判断。节点 ID 按 `teach_0`、`teach_1` 顺序生成，只输出 TeachingStrategy。

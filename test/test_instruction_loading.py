@@ -42,7 +42,7 @@ class InstructionLoadingTests(unittest.TestCase):
         instruction = provide_tutor_instructions(run_context, tutor_agent)
 
         self.assertIn('subject="math"', instruction)
-        self.assertIn('version="2.0.0"', instruction)
+        self.assertIn('version="3.0.0"', instruction)
         self.assertIn("- S1: 明确研究对象与交付目标", instruction)
 
 if __name__ == "__main__":

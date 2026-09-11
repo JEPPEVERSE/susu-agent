@@ -1,4 +1,4 @@
-"""v0.2 运行时所需的默认身份无关档案。"""
+"""v0.3 运行时所需的默认身份无关档案。"""
 
 from datetime import datetime, timezone
 from typing import Any
@@ -25,4 +25,3 @@ def default_teacher_model(teacher_id: str = "default_teacher") -> dict[str, Any]
             "preferred_framework_ids": [],
         },
     }
-

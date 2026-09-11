@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from local_web.server import TutorWebRuntime
 
 
-class LocalWebV02Tests(unittest.TestCase):
+class LocalWebV03Tests(unittest.TestCase):
     def test_expression_failure_returns_latest_state_without_internal_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_directory:
             database = str(Path(temp_directory) / "web.db")
@@ -31,7 +31,7 @@ class LocalWebV02Tests(unittest.TestCase):
         self.assertNotIn("private details", payload["answer"])
         self.assertIn("teaching_state", payload)
 
-    def test_bootstrap_exposes_v02_artifacts_and_student_model(self) -> None:
+    def test_bootstrap_exposes_v03_artifacts_and_student_model(self) -> None:
         with tempfile.TemporaryDirectory() as temp_directory:
             database = str(Path(temp_directory) / "web.db")
             with patch.dict(
@@ -48,10 +48,10 @@ class LocalWebV02Tests(unittest.TestCase):
                 finally:
                     runtime.close()
 
-        self.assertEqual(payload["v02_runtime"]["architecture_version"], "0.2")
-        self.assertFalse(payload["v02_runtime"]["solution_ready"])
-        self.assertFalse(payload["v02_runtime"]["verification_ready"])
-        self.assertFalse(payload["v02_runtime"]["strategy_ready"])
+        self.assertEqual(payload["v03_runtime"]["architecture_version"], "0.3")
+        self.assertFalse(payload["v03_runtime"]["solution_ready"])
+        self.assertFalse(payload["v03_runtime"]["verification_ready"])
+        self.assertFalse(payload["v03_runtime"]["strategy_ready"])
         self.assertEqual(payload["teaching_state"]["schema_version"], 7)
         self.assertNotIn("student_model", payload["teaching_state"])
         self.assertEqual(payload["student_model"]["student_id"], "web_test_student")

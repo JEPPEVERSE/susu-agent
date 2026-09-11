@@ -4,6 +4,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from susu_agent.schemas.problem_representation import ProblemRepresentation
+
 
 class StrictModel(BaseModel):
     """拒绝模型输出 Schema 之外的字段。"""
@@ -15,7 +17,7 @@ ConceptId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=100)]
 
 
 class TutorQuestion(StrictModel):
-    """Tutor 在某个解题步骤中可以逐步提出的问题。"""
+    """迁移期题目内问题回退；v0.3 优先使用独立 Question Card。"""
 
     question_id: str = Field(pattern=r"^question_[0-9]+$", max_length=100)
     question: str = Field(min_length=1, max_length=500)
@@ -79,6 +81,7 @@ class SolveOutcome(StrictModel):
     schema_version: Literal[1] = 1
     status: Literal["solved", "incomplete", "ambiguous", "unsupported"]
     solution: Solution | None = None
+    problem_representation: ProblemRepresentation | None = None
     clarification_questions: list[str] = Field(default_factory=list, max_length=5)
     reason: str = Field(default="", max_length=1_000)
 

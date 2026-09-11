@@ -11,7 +11,7 @@ from susu_agent.model_config import (
     supports_native_structured_output,
 )
 from susu_agent.schemas.teaching_state import validate_teaching_state
-from susu_agent.schemas.v02 import TeachingExecution
+from susu_agent.schemas.v03 import TeachingExecution
 from susu_agent.structured_output import build_json_output_instruction
 
 

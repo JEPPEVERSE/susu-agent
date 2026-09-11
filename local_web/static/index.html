@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>速速提分 · Agent v0.2</title>
+    <title>速速提分 · Agent v0.3</title>
     <link rel="stylesheet" href="/styles.css" />
     <script>
       window.MathJax = {
@@ -19,7 +19,7 @@
       <aside class="sidebar">
         <div class="brand">
           <span class="brand-mark">S</span>
-          <div><strong>速速提分</strong><small>Agent Architecture v0.2</small></div>
+          <div><strong>速速提分</strong><small>Agent Architecture v0.3</small></div>
         </div>
 
         <button id="new-chat" class="primary-button">＋ 新对话</button>
@@ -30,7 +30,7 @@
         </section>
 
         <section class="state-card">
-          <div class="section-title">v0.2 运行状态</div>
+          <div class="section-title">v0.3 运行状态</div>
           <dl>
             <div><dt>Session</dt><dd id="session-id">—</dd></div>
             <div><dt>教案版本</dt><dd id="plan-version">—</dd></div>
@@ -39,7 +39,7 @@
             <div><dt>解题步骤</dt><dd id="current-step">—</dd></div>
             <div><dt>教学阶段</dt><dd id="teaching-stage">—</dd></div>
           </dl>
-          <div class="pipeline" aria-label="v0.2 artifact 状态">
+          <div class="pipeline" aria-label="v0.3 artifact 状态">
             <span id="solution-ready">求解</span>
             <span id="verification-ready">验证</span>
             <span id="strategy-ready">规划</span>
@@ -71,15 +71,15 @@
 
       <main class="main-panel">
         <header class="topbar">
-          <div><h1>v0.2 初步测试</h1><p>首轮预计算三层 · 后续单 Agent 执行 · 结构化状态可观测</p></div>
+          <div><h1>v0.3 架构测试</h1><p>五层控制平面 · 分域记忆检索 · 结构化状态可观测</p></div>
           <span id="connection-status" class="status-pill">正在连接</span>
         </header>
 
         <section id="messages" class="messages" aria-live="polite">
           <article class="welcome-card">
-            <span class="eyebrow">v0.2 LOCAL LAB</span>
+            <span class="eyebrow">v0.3 LOCAL LAB</span>
             <h2>从一道题开始</h2>
-            <p>输入一道新题后，系统会生成并验证解题图、建立教学策略，再进入每轮单 Agent 的教学执行。</p>
+            <p>输入一道新题后，系统会结构化题目、检索适用记忆、验证解题图并建立教学策略。</p>
           </article>
         </section>
 

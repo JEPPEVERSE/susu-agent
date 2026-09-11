@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "subject": "math",
+  "catalog_version": "1.0.0",
+  "question_cards": [
+    {
+      "question_card_id": "question_freeze_variable",
+      "question_template": "面对多个自由度时，我们优先进行什么处理？",
+      "teaching_goal": "引导学生通过冻结变量降低自由度",
+      "expected_answer": "先固定部分变量，研究剩余变量的变化",
+      "answer_checkpoints": [
+        "识别多个独立变量",
+        "提出冻结一个变量"
+      ],
+      "hint_ladder": [
+        "先数一数当前有几个量可以独立变化。",
+        "能否暂时固定其中一个量？"
+      ],
+      "applicability": {
+        "degrees_of_freedom_min": 2,
+        "goal_types": ["extremum"],
+        "problem_types": ["inequality", "function", "unknown"],
+        "lesson_plan_step_ids": ["S3", "S6"],
+        "concept_ids": ["degrees_of_freedom", "freeze_variable"],
+        "task_stages": ["plan_instruction"]
+      },
+      "retrieval_text": "多自由度最值问题，变量相互制约，通过冻结一个变量降低系统自由度"
+    }
+  ],
+  "misconception_cards": [
+    {
+      "misconception_card_id": "misconception_direct_derivative_multivariable",
+      "description": "未处理变量依赖关系便把多变量目标当作一元函数直接求导",
+      "diagnostic_signals": [
+        "直接说求导但没有指出对哪个变量求导",
+        "忽略约束下变量之间的依赖关系"
+      ],
+      "counterexamples": [
+        "同一目标沿不同约束路径的导数可能不同"
+      ],
+      "correction_strategy": "先让学生说明独立变量及约束关系，再决定参数化或冻结变量",
+      "answer_checkpoints": [
+        "指出独立变量",
+        "说明约束如何减少自由度"
+      ],
+      "applicability": {
+        "degrees_of_freedom_min": 2,
+        "goal_types": ["extremum"],
+        "lesson_plan_step_ids": ["S3", "S6"],
+        "concept_ids": ["degrees_of_freedom", "derivative"],
+        "task_stages": ["assess_student_answer"]
+      },
+      "retrieval_text": "学生在多变量约束最值问题中提出直接求导，却未说明独立变量、求导对象或变量依赖关系"
+    }
+  ]
+}

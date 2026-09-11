@@ -1,4 +1,4 @@
-"""v0.2 TeachingExecution 的确定性状态转移与运行时校验。"""
+"""v0.3 TeachingExecution 的确定性状态转移与记忆引用校验。"""
 
 from copy import deepcopy
 from dataclasses import dataclass
@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Mapping
 
 from susu_agent.schemas.teaching_state import validate_teaching_state
-from susu_agent.schemas.v02 import (
+from susu_agent.schemas.v03 import (
     LearningEvidence,
     TeachingExecution,
     TeachingStrategy,
@@ -214,7 +214,44 @@ def validate_teaching_execution_against_state(
         active_question,
         decision.source_node_id,
     )
+    _validate_execution_memory_references(current_teaching_state, execution)
     return decision
+
+
+def _validate_execution_memory_references(
+    state: Mapping[str, Any], execution: TeachingExecution
+) -> None:
+    cache = state.get("retrieval_cache", {}).get("execution", {})
+    retrieved = {
+        item.get("memory_id"): item.get("memory_type")
+        for item in cache.get("evidence", [])
+        if isinstance(item, Mapping)
+    }
+    referenced = set(execution.retrieval_evidence_ids)
+    referenced.update(execution.diagnosed_misconception_card_ids)
+    for evidence in execution.learning_evidence:
+        referenced.update(evidence.retrieval_evidence_ids)
+        referenced.update(evidence.misconception_card_ids)
+    unknown = referenced - set(retrieved)
+    if unknown:
+        raise ValueError(
+            f"Teaching execution references unreturned memory: {sorted(unknown)!r}."
+        )
+    invalid = {
+        memory_id
+        for memory_id in execution.diagnosed_misconception_card_ids
+        if retrieved.get(memory_id) != "misconception_card"
+    }
+    invalid.update(
+        memory_id
+        for evidence in execution.learning_evidence
+        for memory_id in evidence.misconception_card_ids
+        if retrieved.get(memory_id) != "misconception_card"
+    )
+    if invalid:
+        raise ValueError(
+            f"Diagnosis references non-Misconception Cards: {sorted(invalid)!r}."
+        )
 
 
 def apply_teaching_execution(
@@ -447,6 +484,10 @@ def _append_open_question(
             "question": question,
             "strategy_node_id": strategy_node_id,
             "solution_question_id": node.get("solution_question_id") if node else None,
+            "question_card_id": node.get("question_card_id") if node else None,
+            "retrieval_evidence_ids": (
+                list(node.get("retrieval_evidence_ids", [])) if node else []
+            ),
             "target_checkpoint_indices": list(target_checkpoint_indices),
             "status": "open",
             "asked_at": now,

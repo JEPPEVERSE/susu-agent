@@ -1,6 +1,7 @@
-"""根据数学教案生成题目级结构化 Solution。"""
+"""v0.3 题目结构化与可验证 Solution 生成。"""
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -30,11 +31,17 @@ MATH_SOLUTION_USES_NATIVE_OUTPUT = supports_native_structured_output(
 
 
 def compose_math_solver_instructions(lesson_plan: LessonPlanBundle) -> str:
-    """把解题 Agent 通用规则和完整数学教案组合起来。"""
+    """组合总纲；v0.3 开启时专题正文由检索按题注入。"""
     base_instruction = load_instruction("math_solver_instruction.md").strip()
     step_catalog = "\n".join(
         f"- {step.step_id}: {step.name}" for step in lesson_plan.steps
     )
+    lesson_context = lesson_plan.context
+    if os.getenv("MEMORY_ENABLED", "false").casefold() in {"1", "true", "yes", "on"}:
+        lesson_context = "\n\n".join(
+            lesson_plan.context_sections[heading][1]
+            for heading in lesson_plan.always_include_context_headings
+        )
     instruction = (
         f"{base_instruction}\n\n"
         f"<lesson_plan subject=\"{lesson_plan.subject}\" "
@@ -44,7 +51,7 @@ def compose_math_solver_instructions(lesson_plan: LessonPlanBundle) -> str:
         "## 教案执行规则\n\n"
         f"{lesson_plan.instruction}\n\n"
         "## 教案理论正文\n\n"
-        f"{lesson_plan.context}\n"
+        f"{lesson_context}\n"
         "</lesson_plan>"
     )
     if not MATH_SOLUTION_USES_NATIVE_OUTPUT:
@@ -64,18 +71,27 @@ def build_math_solver_input(
     student_model: Mapping[str, Any] | None = None,
     revision_context: Mapping[str, Any] | None = None,
     previous_solution: Mapping[str, Any] | None = None,
+    problem_representation: Mapping[str, Any] | None = None,
+    retrieved_solution_memory: Mapping[str, Any] | None = None,
 ) -> str:
     """构造学生无关的标准求解输入。
 
     ``student_model`` 仅为兼容 v0.1 调用方保留，不进入求解上下文。
-    个性化判断由 v0.2 教学规划层负责。
+    个性化判断由 v0.3 教学规划层负责。
     """
-    return json.dumps(
-        {
+    payload: dict[str, Any] = {
             "problem_statement": problem_statement,
             "previous_solution": previous_solution,
             "revision_context": revision_context,
-        },
+        }
+    if problem_representation is not None:
+        payload["preliminary_problem_representation"] = dict(
+            problem_representation
+        )
+    if retrieved_solution_memory is not None:
+        payload["retrieved_solution_memory"] = dict(retrieved_solution_memory)
+    return json.dumps(
+        payload,
         ensure_ascii=False,
         indent=2,
     )

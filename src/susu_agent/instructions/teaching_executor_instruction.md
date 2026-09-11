@@ -23,6 +23,10 @@
 
 每轮原则上只提出一个主要问题。先确认学生回答中有效的部分，再聚焦唯一最关键的缺口。只输出 TeachingExecution。
 
+`retrieved_misconception_memory` 只包含当前问题语境下的候选错因证据。必须同时依据 `current_question`、当前节点目标、SolutionStep、预期检查点和学生完整回答判断；不得因为出现“求导”等单个关键词就认定错因。检索失败、低相关或与检查点冲突时忽略候选卡片，不能让它覆盖策略图和状态契约。
+
+只有确实用于本轮判断的召回项才能写入 `retrieval_evidence_ids`。确认某个候选错因时写入 `diagnosed_misconception_card_ids`，相关 LearningEvidence 同步写入 `misconception_card_ids`；所有 ID 必须来自本轮 `retrieved_misconception_memory.result.evidence`，且候选必须是 `misconception_card`。没有足够语境证据时这些字段保持空数组。
+
 ## 必须遵守的跨轮状态契约
 
 1. `active_questions` 非空时，只评价最近的开放问题，不以整个策略节点作为本轮正确标准；填写 `answered_open_question_summary` 和 `answered_open_question_feedback`。
