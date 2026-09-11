@@ -23,6 +23,10 @@
 
 输入中的 `subject_level_policy` 是代码根据学科水平有限状态机生成的硬约束。必须从 `recommended_entry_solution_step_id` / `recommended_entry_question_id` 开始策略图。`skip_foundation_questions=true` 时，`deferred_question_ids` 不能出现在默认主路径，只能作为学生回答错误、部分正确或不会时的补救分支，不能在首轮固定回退。
 
+`unassessed` 表示尚无可靠水平证据，不表示基础薄弱。此时默认用 `standard` 难度的核心问题进行诊断；首问应最大化对后续路线选择的信息增益，优先检查关键表示、决定性约束或主要推导断点。题面直接给出的符号、机械去分母、复述目标等低信息量问题不得作为默认首问，除非 StudentModel 有相应错因证据；它们只能作为回答错误后的补救检查点。
+
+首个策略节点的 `prompt_intent` 必须对应一个局部、可直接回答的问题，只检查一个原子检查点。不得在首问中向学生概述完整 Solution，也不得把多个后续动作连接成“先……再……最后……”的计划。
+
 个性化风格应明确落实到节点的 `prompt_intent` 与提示安排中：`concise` 表示压缩铺垫，`rigorous` 表示保持术语和推导准确，`key_point_first` 表示先指出本轮核心，`socratic` 表示优先提问，`example_first` / `visual` / `step_by_step` 分别表示优先例子、视觉化描述或分步展开。StudentModel 偏好与 TeacherModel 冲突时，以安全和正确性为前提，优先满足学生明确偏好；没有记录时采用 TeacherModel 默认值。
 
 `anticipated_difficulties` 由本层负责：结合解法结构识别通用难点，并且只在 StudentModel 有证据时标记个性化风险。每项困难必须引用存在的 SolutionStep，说明证据来源、可能性和对应处理计划。不得把预测写成学生已经暴露的事实。

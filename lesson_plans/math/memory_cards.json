@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "subject": "math",
-  "catalog_version": "1.0.0",
+  "catalog_version": "1.1.0",
   "question_cards": [
     {
       "question_card_id": "question_freeze_variable",
@@ -25,6 +25,28 @@
         "task_stages": ["plan_instruction"]
       },
       "retrieval_text": "多自由度最值问题，变量相互制约，通过冻结一个变量降低系统自由度"
+    },
+    {
+      "question_card_id": "question_trigonometric_constraint_normalization",
+      "question_template": "不展开后续计算，你能先把原约束等价改写成 tanα 关于 tanβ 的什么关系吗？",
+      "teaching_goal": "把混合三角形式化为单变量二次式，直接暴露最值结构",
+      "expected_answer": "展开和角并统一使用正切表示，使约束化为一个变量关于另一个变量的二次关系，再配方求界",
+      "answer_checkpoints": [
+        "得到 tanα=tan²β−tanβ+1"
+      ],
+      "hint_ladder": [
+        "先展开 sin(α+β)，再观察各项能否统一除以余弦乘积。",
+        "尝试让式子只保留 tanα 和 tanβ。",
+        "得到关于 tanβ 的二次式后，优先配方而不是绕行判别式。"
+      ],
+      "applicability": {
+        "goal_types": ["extremum"],
+        "problem_types": ["trigonometry"],
+        "lesson_plan_step_ids": ["S4", "S5", "S6"],
+        "concept_ids": ["trigonometric_identity", "trigonometric_substitution", "constrained_optimization"],
+        "task_stages": ["plan_instruction"]
+      },
+      "retrieval_text": "三角恒等式约束最值，展开和角，除以非零余弦因子，统一化为正切关系，对单变量二次式配方"
     }
   ],
   "misconception_cards": [
@@ -51,6 +73,32 @@
         "task_stages": ["assess_student_answer"]
       },
       "retrieval_text": "学生在多变量约束最值问题中提出直接求导，却未说明独立变量、求导对象或变量依赖关系"
+    }
+  ],
+  "solution_patterns": [
+    {
+      "solution_pattern_id": "solution_pattern_trigonometric_tangent_normalization",
+      "title": "三角约束统一为正切二次式",
+      "problem_signature": "锐角变量满足含和角、正弦、余弦乘积或商的等式约束，并要求某个三角函数的最值",
+      "strategy": "先利用角的范围确认相关余弦因子非零；清除分母并展开和角。优先把等式整体除以合适的余弦乘积，统一改写为 tan 关系。若得到 tanα = tan²β - tanβ + 1 一类单变量二次式，直接配方求界，并检查取等参数仍在原开区间内。只有无法直接化成单变量二次式时再考虑判别式。",
+      "preconditions": [
+        "被除的余弦因子在给定角度范围内非零",
+        "正切代换保持原定义域",
+        "取等参数满足原约束和开区间"
+      ],
+      "verification_checks": [
+        "检查除法等价性",
+        "检查配方取等点是否落在参数范围内",
+        "将取等点代回原三角等式"
+      ],
+      "applicability": {
+        "goal_types": ["extremum"],
+        "problem_types": ["trigonometry"],
+        "lesson_plan_step_ids": ["S4", "S5", "S6", "S8"],
+        "concept_ids": [],
+        "task_stages": ["solve"]
+      },
+      "retrieval_text": "锐角 三角恒等式 约束最值 和角公式 正弦余弦商 统一正切 二次式配方 tan alpha tan beta"
     }
   ]
 }

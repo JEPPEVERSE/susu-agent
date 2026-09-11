@@ -21,6 +21,8 @@ class VerificationIssue(StrictModel):
         "condition_omission",
         "lesson_plan_mismatch",
         "evidence_insufficient",
+        "route_inefficiency",
+        "pedagogical_mismatch",
     ]
     severity: Literal["warning", "error"]
     evidence: str = Field(min_length=1, max_length=2_000)
@@ -36,6 +38,10 @@ class VerificationReport(StrictModel):
     confidence: Literal["low", "medium", "high"]
     checked_condition_indices: list[int] = Field(default_factory=list, max_length=50)
     evidence_sufficient: bool = True
+    route_quality: Literal["direct", "acceptable", "needs_simplification"] = (
+        "acceptable"
+    )
+    simpler_route_summary: str | None = Field(default=None, max_length=2_000)
 
     @model_validator(mode="after")
     def validate_verdict(self) -> Self:
@@ -51,6 +57,13 @@ class VerificationReport(StrictModel):
             issue.issue_type == "evidence_insufficient" for issue in self.issues
         ):
             raise ValueError("Insufficient evidence requires an evidence issue.")
+        if self.route_quality == "needs_simplification":
+            if self.verdict != "needs_revision":
+                raise ValueError("A route needing simplification cannot pass verification.")
+            if not self.simpler_route_summary:
+                raise ValueError("A route needing simplification requires a route summary.")
+            if not any(issue.issue_type == "route_inefficiency" for issue in self.issues):
+                raise ValueError("A route needing simplification requires a route issue.")
         if len(self.checked_condition_indices) != len(
             set(self.checked_condition_indices)
         ) or any(index < 0 for index in self.checked_condition_indices):

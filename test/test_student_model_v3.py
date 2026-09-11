@@ -284,7 +284,7 @@ class StudentModelV3Tests(unittest.TestCase):
                 wrong_entry, solution, policy
             )
 
-    def test_low_confidence_level_does_not_skip_foundation_question(self) -> None:
+    def test_low_confidence_level_uses_standard_diagnostic_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_directory:
             repository = StudentModelRepository(Path(temp_directory) / "state.db")
             model = repository.get_or_create("student_0")
@@ -294,8 +294,8 @@ class StudentModelV3Tests(unittest.TestCase):
         policy = build_subject_level_policy(make_levelled_solution(), model, "math")
 
         self.assertEqual(policy["effective_level_state"], "unassessed")
-        self.assertFalse(policy["skip_foundation_questions"])
-        self.assertEqual(policy["recommended_entry_question_id"], "question_0")
+        self.assertTrue(policy["skip_foundation_questions"])
+        self.assertEqual(policy["recommended_entry_question_id"], "question_1")
 
     def test_v2_model_migrates_concepts_scores_and_preferences(self) -> None:
         now = datetime.now(timezone.utc).isoformat()

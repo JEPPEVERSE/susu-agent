@@ -13,7 +13,9 @@ from susu_agent.schemas.v03 import (
 )
 
 
-MAX_NODE_ATTEMPTS = 3
+# 同一教学节点最多接收两轮学生回答。第二轮结束后，无论回答是否正确，
+# 都要揭示当前开放问题的答案与教学意图，并沿掌握分支继续。
+MAX_NODE_ATTEMPTS = 2
 _NON_MASTERY_ASSESSMENTS = {
     "no_idea",
     "incorrect",
@@ -31,15 +33,40 @@ class ExecutionDecision:
     action: str
     control_signal: Literal["continue", "replan_required", "complete"]
     forced_advance: bool = False
+    reveal_current_answer: bool = False
 
 
 def checkpoint_id(node_id: str, checkpoint_index: int) -> str:
     return f"{node_id}:checkpoint_{checkpoint_index}"
 
 
-def render_teaching_response(execution: TeachingExecution) -> str:
+def render_teaching_response(
+    execution: TeachingExecution,
+    current_teaching_state: Mapping[str, Any] | None = None,
+) -> str:
     """由唯一的结构化问题字段组装学生可见回复。"""
-    parts = [execution.feedback.strip()]
+    # 首轮还没有学生回答，不存在需要展示的“反馈”。即使表达模型把内部
+    # 规划误写进 feedback，也只渲染开放问题，避免把解题路线直接泄露给学生。
+    has_active_question = (
+        current_teaching_state is not None
+        and _active_question(current_teaching_state) is not None
+    )
+    parts = [execution.feedback.strip()] if has_active_question else []
+    if current_teaching_state is not None:
+        decision = resolve_execution_decision(current_teaching_state, execution)
+        if decision.reveal_current_answer:
+            answer, purpose, principle = _current_question_explanation(
+                current_teaching_state
+            )
+            parts.append(
+                "\n".join(
+                    (
+                        f"当前问题的正确答案：{answer}",
+                        f"这一步的目的：{purpose}",
+                        f"背后原理：{principle}",
+                    )
+                )
+            )
     if execution.state_delta.open_question is not None:
         parts.append(execution.state_delta.open_question.strip())
     response = "\n\n".join(part for part in parts if part)
@@ -132,7 +159,11 @@ def resolve_execution_decision(
         condition = execution.assessment
 
     attempts = progress.get("attempts_by_node", {}).get(source_node_id, 0) + 1
-    forced_advance = condition in _NON_MASTERY_ASSESSMENTS and attempts >= MAX_NODE_ATTEMPTS
+    reveal_current_answer = attempts >= MAX_NODE_ATTEMPTS
+    forced_advance = (
+        condition in _NON_MASTERY_ASSESSMENTS
+        and attempts >= MAX_NODE_ATTEMPTS
+    )
     transition_condition = "correct" if forced_advance else condition
     transition = _require_transition(source_node, transition_condition)
     action = transition.get("action")
@@ -153,6 +184,7 @@ def resolve_execution_decision(
         action=str(action),
         control_signal=control_signal,
         forced_advance=forced_advance,
+        reveal_current_answer=reveal_current_answer,
     )
 
 
@@ -175,6 +207,11 @@ def validate_teaching_execution_against_state(
             raise ValueError("A turn without an open question must be unassessed.")
         if delta.satisfied_checkpoint_indices_to_add:
             raise ValueError("A turn without an answer cannot satisfy checkpoints.")
+        if execution.feedback.strip():
+            raise ValueError(
+                "The initial teaching turn must leave feedback empty and ask only "
+                "the student-visible open question."
+            )
 
     decision = resolve_execution_decision(current_teaching_state, execution)
     if decision.control_signal == "continue":
@@ -196,6 +233,10 @@ def validate_teaching_execution_against_state(
             raise ValueError("Open-question checkpoint targets are invalid.")
         if target_node.get("teaching_action") == "ask_question" and checkpoint_count and not targets:
             raise ValueError("A question node must target at least one checkpoint.")
+        if active_question is None and len(targets) != 1:
+            raise ValueError(
+                "The initial open question must target exactly one atomic checkpoint."
+            )
         already_satisfied = _satisfied_indices(
             current_teaching_state, decision.target_node_id
         )
@@ -351,6 +392,68 @@ def _active_question(state: Mapping[str, Any]) -> Mapping[str, Any] | None:
     if len(active) > 1:
         raise ValueError("Teaching state contains multiple open questions.")
     return active[0] if active else None
+
+
+def _current_question_explanation(
+    state: Mapping[str, Any],
+) -> tuple[str, str, str]:
+    """从已校验的 Solution/Strategy 生成第二轮后的确定性讲解材料。"""
+    active_question = _active_question(state)
+    if active_question is None:
+        raise ValueError("Cannot reveal an answer without an active question.")
+
+    node = _strategy_nodes(state).get(active_question.get("strategy_node_id"))
+    if node is None:
+        raise ValueError("The active question does not reference a strategy node.")
+
+    solution = state.get("solution") or {}
+    step = next(
+        (
+            item
+            for item in solution.get("steps", [])
+            if item.get("solution_step_id") == node.get("solution_step_id")
+        ),
+        None,
+    )
+    if step is None:
+        raise ValueError("The active question does not reference a Solution step.")
+
+    solution_question_id = active_question.get("solution_question_id")
+    solution_question = next(
+        (
+            item
+            for item in step.get("tutor_questions", [])
+            if item.get("question_id") == solution_question_id
+        ),
+        None,
+    )
+    if solution_question is None:
+        raise ValueError("The active question does not reference a Solution question.")
+
+    target_indices = active_question.get("target_checkpoint_indices", [])
+    checkpoints = node.get("answer_checkpoints", [])
+    target_checkpoints = [
+        checkpoints[index]
+        for index in target_indices
+        if isinstance(index, int) and 0 <= index < len(checkpoints)
+    ]
+    expected_answer = str(solution_question.get("expected_answer", "")).strip()
+    if target_checkpoints:
+        answer = "；".join(str(item).strip() for item in target_checkpoints)
+        if expected_answer:
+            answer = f"{answer}。完整表述：{expected_answer}"
+    else:
+        answer = expected_answer
+
+    purpose = str(
+        solution_question.get("teaching_goal") or node.get("goal") or "完成当前推理步骤"
+    ).strip()
+    principle = str(
+        step.get("derivation") or step.get("result") or node.get("prompt_intent")
+    ).strip()
+    if not answer or not purpose or not principle:
+        raise ValueError("The current question lacks answer-explanation material.")
+    return answer, purpose, principle
 
 
 def _satisfied_indices(state: Mapping[str, Any], node_id: str | None) -> set[int]:

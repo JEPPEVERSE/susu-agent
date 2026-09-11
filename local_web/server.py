@@ -22,6 +22,7 @@ if str(SRC_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SRC_DIRECTORY))
 
 from dotenv import load_dotenv  # noqa: E402
+from logging_config import configure_logging  # noqa: E402
 
 from susu_agent.context_builder import ContextMessage  # noqa: E402
 from susu_agent.orchestrator import V03Orchestrator  # noqa: E402
@@ -35,7 +36,7 @@ from susu_agent.session import SessionManager  # noqa: E402
 
 
 load_dotenv(PROJECT_ROOT / ".env")
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("susu_agent.local_web")
 
 
 class TutorWebRuntime:
@@ -83,10 +84,21 @@ class TutorWebRuntime:
                 )
             except Exception:
                 logger.exception("Teaching turn failed; returning a retryable response")
+                bootstrap = self._bootstrap_unlocked(include_messages=False)
+                report = bootstrap["teaching_state"].get("verification_report")
+                awaiting_revision = (
+                    isinstance(report, dict)
+                    and report.get("verdict") == "needs_revision"
+                )
                 return {
-                    "answer": "本轮表达暂时没有生成，请重新发送刚才的内容。",
+                    "answer": (
+                        "解法验证未通过，自动修订过程意外中断；"
+                        "已保留当前解法和验证意见，请重新发送刚才的内容继续修订。"
+                        if awaiting_revision
+                        else "本轮表达暂时没有生成，请重新发送刚才的内容。"
+                    ),
                     "degraded": True,
-                    **self._bootstrap_unlocked(include_messages=False),
+                    **bootstrap,
                 }
             return {
                 "answer": teacher_response,
@@ -140,6 +152,17 @@ class TutorWebRuntime:
     ) -> dict[str, Any]:
         session_id = self._require_session_id()
         state = self._state_repository.get_or_create(session_id)
+        verification = state.get("verification_report")
+        verification_verdict = (
+            verification.get("verdict")
+            if isinstance(verification, dict)
+            else None
+        )
+        display_problem_status = state.get("original_problem", {}).get(
+            "status", "pending"
+        )
+        if verification_verdict == "needs_revision":
+            display_problem_status = "revising"
         sessions = [
             {
                 "session_id": item.session_id,
@@ -158,11 +181,11 @@ class TutorWebRuntime:
             "v03_runtime": {
                 "architecture_version": "0.3",
                 "memory_enabled": self._orchestrator.memory_enabled,
-                "problem_status": state.get("original_problem", {}).get(
-                    "status", "pending"
-                ),
+                "student_id": self._student_id,
+                "problem_status": display_problem_status,
                 "solution_ready": state.get("solution") is not None,
-                "verification_ready": state.get("verification_report") is not None,
+                "verification_ready": verification_verdict == "passed",
+                "verification_status": verification_verdict or "pending",
                 "strategy_ready": state.get("teaching_strategy") is not None,
                 "solution_revision": state.get("v03_meta", {}).get(
                     "solution_revision", 0
@@ -322,6 +345,9 @@ class TutorRequestHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    # Web 调试服务与命令行入口可能同时运行；只配置控制台日志，避免 Windows
+    # 上两个进程争抢同一个轮转日志文件。
+    configure_logging(log_to_file=False)
     parser = argparse.ArgumentParser(description="启动 susuAgent v0.3 测试页面。")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)

@@ -16,6 +16,7 @@ from susu_agent.schemas.memory import (
     MisconceptionCard,
     Provenance,
     QuestionCard,
+    SolutionPattern,
 )
 
 
@@ -33,7 +34,9 @@ def index_memory_cards(
         raise ValueError("Memory card catalog metadata does not match lesson plan.")
     known_steps = set(lesson_plan.step_ids)
     catalog_digest = sha256(path.read_bytes()).hexdigest()
-    cards: list[tuple[MemoryType, QuestionCard | MisconceptionCard]] = []
+    cards: list[
+        tuple[MemoryType, QuestionCard | MisconceptionCard | SolutionPattern]
+    ] = []
     cards.extend(
         (MemoryType.QUESTION_CARD, value)
         for value in catalog.question_cards
@@ -42,6 +45,10 @@ def index_memory_cards(
         (MemoryType.MISCONCEPTION_CARD, value)
         for value in catalog.misconception_cards
     )
+    cards.extend(
+        (MemoryType.SOLUTION_PATTERN, value)
+        for value in catalog.solution_patterns
+    )
     count = 0
     current_ids: set[str] = set()
     for memory_type, card in cards:
@@ -49,11 +56,15 @@ def index_memory_cards(
         unknown_steps = set(applicability.lesson_plan_step_ids) - known_steps
         if unknown_steps:
             raise ValueError(f"Memory Card references unknown lesson steps: {sorted(unknown_steps)!r}")
-        memory_id = (
-            card.question_card_id
-            if isinstance(card, QuestionCard)
-            else card.misconception_card_id
-        )
+        if isinstance(card, QuestionCard):
+            memory_id = card.question_card_id
+            payload_key = "card"
+        elif isinstance(card, MisconceptionCard):
+            memory_id = card.misconception_card_id
+            payload_key = "card"
+        else:
+            memory_id = card.solution_pattern_id
+            payload_key = "pattern"
         current_ids.add(memory_id)
         current = repository.get(memory_id)
         if current is not None and current.metadata.get("catalog_digest") == catalog_digest:
@@ -68,11 +79,19 @@ def index_memory_cards(
             subject=lesson_plan.subject,
             task_stages=(
                 applicability.task_stages
-                or (["plan_instruction"] if memory_type == MemoryType.QUESTION_CARD else ["assess_student_answer"])
+                or (
+                    ["plan_instruction"]
+                    if memory_type == MemoryType.QUESTION_CARD
+                    else ["solve"]
+                    if memory_type == MemoryType.SOLUTION_PATTERN
+                    else ["assess_student_answer"]
+                )
             ),
             target_agents=(
                 ["teaching_planner"]
                 if memory_type == MemoryType.QUESTION_CARD
+                else ["solution_agent"]
+                if memory_type == MemoryType.SOLUTION_PATTERN
                 else ["teaching_executor", "student_model_summarizer"]
             ),
             concept_ids=applicability.concept_ids,
@@ -87,7 +106,7 @@ def index_memory_cards(
             version=current.version + 1 if current else 1,
             status=MemoryStatus.ACTIVE,
             metadata={
-                "card": card.model_dump(mode="json"),
+                payload_key: card.model_dump(mode="json"),
                 "catalog_digest": catalog_digest,
                 "lesson_plan_version": lesson_plan.lesson_plan_version,
             },
@@ -103,8 +122,11 @@ def index_memory_cards(
     for stale in repository.list_items(statuses=[MemoryStatus.ACTIVE]):
         if (
             stale.subject == lesson_plan.subject
-            and stale.memory_type
-            in {MemoryType.QUESTION_CARD, MemoryType.MISCONCEPTION_CARD}
+            and stale.memory_type in {
+                MemoryType.QUESTION_CARD,
+                MemoryType.MISCONCEPTION_CARD,
+                MemoryType.SOLUTION_PATTERN,
+            }
             and stale.provenance.source_type == "lesson_plan_card_catalog"
             and stale.memory_id not in current_ids
         ):

@@ -38,13 +38,13 @@ unassessed -> foundation -> developing -> proficient -> advanced
 - 初次形成可靠评价时，`unassessed` 可以进入任一已评估状态。
 - 已评估状态每次长期更新最多上升或下降一级。
 - 无 evidence ID 或低置信度的更新不会写入长期模型。
-- 低置信度的已有水平记录按 `unassessed` 处理，不会触发跳题。
+- 低置信度的已有水平记录按 `unassessed` 处理，以标准诊断题进入，不直接推定为基础薄弱。
 - 单个知识点的一次回答不能直接代表整门学科水平。
 
 TeachingPlanner 运行前，代码会根据当前学科状态生成 `subject_level_policy`：
 
-- `unassessed` / `foundation`：保留基础问题，从第一层检查开始；
-- `developing` / `proficient`：默认跳过 `foundation` 问题，从标准问题进入；
+- `foundation`：保留基础问题，从第一层检查开始；
+- `unassessed` / `developing` / `proficient`：默认跳过 `foundation` 问题，从标准诊断问题进入；
 - `advanced`：优先从 `advanced` 问题进入；若本题没有高级问题，则回退到题目中实际存在的最高难度。
 
 代码选出的 `recommended_entry_question_id` 和对应 SolutionStep 是策略图的强制入口。被跳过的问题仍可作为回答错误、部分正确或不会时的补救分支。

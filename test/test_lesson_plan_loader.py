@@ -15,7 +15,7 @@ class LessonPlanLoaderTests(unittest.TestCase):
 
         self.assertEqual(lesson_plan.subject, "math")
         self.assertEqual(lesson_plan.manifest_schema_version, 1)
-        self.assertEqual(lesson_plan.lesson_plan_version, "3.0.0")
+        self.assertEqual(lesson_plan.lesson_plan_version, "3.1.1")
         self.assertEqual(lesson_plan.step_ids, tuple(f"S{i}" for i in range(1, 10)))
         self.assertEqual(len(lesson_plan.content_digest), 64)
         self.assertIn("S1 明确研究对象与交付目标", lesson_plan.instruction)

@@ -24,7 +24,7 @@ MODEL = resolve_agent_model("TEACHING_PLANNER_MODEL")
 USES_NATIVE_OUTPUT = supports_native_structured_output(MODEL)
 QUESTION_DIFFICULTY_ORDER = {"foundation": 0, "standard": 1, "advanced": 2}
 MINIMUM_DIFFICULTY_BY_LEVEL = {
-    "unassessed": "foundation",
+    "unassessed": "standard",
     "foundation": "foundation",
     "developing": "standard",
     "proficient": "standard",

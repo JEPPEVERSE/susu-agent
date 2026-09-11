@@ -263,6 +263,8 @@ class TeachingStateRepository:
             if question.get("status") == "open":
                 question["status"] = "abandoned"
                 question["resolved_at"] = now
+            # Solution 已被废弃，历史问题不能继续引用旧 Solution 的问题 ID。
+            question["solution_question_id"] = None
         state.setdefault("v03_meta", {})["summary_completed"] = False
 
     def _upgrade_v1_state(

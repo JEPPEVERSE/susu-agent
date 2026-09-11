@@ -159,7 +159,7 @@ class TeachingStateRepositoryTests(unittest.TestCase):
         self.assertEqual(created_state["lesson_plan"]["subject"], "math")
         self.assertEqual(
             created_state["lesson_plan"]["lesson_plan_version"],
-            "3.0.0",
+            "3.1.1",
         )
         self.assertEqual(
             created_state["lesson_plan"]["step_ids"],

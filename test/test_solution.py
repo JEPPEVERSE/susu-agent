@@ -158,7 +158,7 @@ class SolutionTests(unittest.TestCase):
             self.assertIn("## JSON 文本兼容模式", instruction)
         self.assertIn("# 数学解题规划 Agent Instruction", instruction)
         self.assertIn("S3: 确定动静关系与控制参数", instruction)
-        self.assertIn("数学解题理论上下文", instruction)
+        self.assertIn("总纲：稳定解题是对题目系统进行降维、控制与闭环", instruction)
 
     def test_solver_input_is_student_independent_in_v02(self) -> None:
         payload = build_math_solver_input(

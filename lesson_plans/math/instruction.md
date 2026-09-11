@@ -1,6 +1,6 @@
 # 数学解题与教学执行规则
 
-版本：4.0。依据同目录 `context.md` 整理，供 v0.3 Solution Agent、Verifier、Teaching Planner 与 Teaching Executor 按最小上下文投影执行。
+版本：3.1.1。依据同目录 `context.md` 整理，供 v0.3 Solution Agent、Verifier、Teaching Planner 与 Teaching Executor 按最小上下文投影执行。
 
 ## Agent 职责边界
 

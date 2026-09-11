@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "subject": "math",
-  "lesson_plan_version": "3.0.0",
+  "lesson_plan_version": "3.1.1",
   "instruction_files": [
     "instruction.md"
   ],

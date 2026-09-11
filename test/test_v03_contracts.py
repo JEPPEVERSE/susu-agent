@@ -21,6 +21,7 @@ from susu_agent.schemas.v03 import (
     TeachingTransition,
     TeachingExecution,
     ExecutionStateDelta,
+    VerificationIssue,
     VerificationReport,
 )
 
@@ -108,6 +109,72 @@ def strategy(question_card_id: str | None = None) -> TeachingStrategy:
 
 
 class V03ContractTests(unittest.TestCase):
+    def test_free_text_problem_labels_are_normalized_for_retrieval(self) -> None:
+        represented = ProblemRepresentation(
+            problem_id="problem_trigonometric",
+            subject="math",
+            goal_type="求最大值",
+            problem_type="三角条件约束下的最值问题",
+            goal="求 cos α 的最大值",
+        )
+
+        self.assertEqual(represented.goal_type, "extremum")
+        self.assertEqual(represented.problem_type, "trigonometry")
+
+    def test_indirect_solution_route_cannot_pass_verification(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot pass verification"):
+            VerificationReport(
+                verdict="passed",
+                summary="答案虽然正确，但路线明显绕远。",
+                checked_solution_step_ids=["step_0"],
+                confidence="high",
+                route_quality="needs_simplification",
+                simpler_route_summary="统一成正切后二次配方即可。",
+                issues=[
+                    VerificationIssue(
+                        issue_id="issue_0",
+                        affected_solution_step_ids=["step_0"],
+                        issue_type="route_inefficiency",
+                        severity="warning",
+                        evidence="引入辅助变量和判别式造成不必要绕行。",
+                        revision_instruction="改用正切代换和配方。",
+                    )
+                ],
+            )
+
+    def test_memory_mode_change_invalidates_cached_problem_artifacts(self) -> None:
+        state = {
+            "original_problem": {"problem_statement": "测试题", "status": "solved"},
+            "solution": {"cached": True},
+            "problem_representation": {"cached": True},
+            "verification_report": {"verdict": "passed"},
+            "teaching_strategy": {"cached": True},
+            "retrieval_cache": {"planning": {"evidence": []}},
+            "memory_update_proposal_ids": ["proposal_0"],
+            "open_question_history": [
+                {
+                    "status": "open",
+                    "resolved_at": None,
+                    "solution_question_id": "question_0",
+                }
+            ],
+            "v03_meta": {"memory_enabled": False, "summary_completed": True},
+        }
+
+        V03Orchestrator._invalidate_for_memory_mode_change(state)
+
+        self.assertIsNone(state["solution"])
+        self.assertIsNone(state["problem_representation"])
+        self.assertIsNone(state["verification_report"])
+        self.assertIsNone(state["teaching_strategy"])
+        self.assertEqual(state["retrieval_cache"], {})
+        self.assertEqual(state["original_problem"]["status"], "pending")
+        self.assertEqual(state["open_question_history"][0]["status"], "abandoned")
+        self.assertIsNone(
+            state["open_question_history"][0]["solution_question_id"]
+        )
+        self.assertFalse(state["v03_meta"]["summary_completed"])
+
     @patch("susu_agent.orchestrator.Runner.run", new_callable=AsyncMock)
     def test_memory_enabled_first_turn_runs_the_full_v03_path(
         self, mock_run: AsyncMock
@@ -124,7 +191,7 @@ class V03ContractTests(unittest.TestCase):
         )
         planned = strategy("question_freeze_variable")
         executed = TeachingExecution(
-            feedback="先从约束关系开始：",
+            feedback="",
             assessment="not_applicable",
             state_delta=ExecutionStateDelta(
                 open_question="面对两个受约束变量，可以怎样降低自由度？",

@@ -8,6 +8,8 @@ const elements = {
   sessionId: document.querySelector("#session-id"),
   planVersion: document.querySelector("#plan-version"),
   problemStatus: document.querySelector("#problem-status"),
+  memoryStatus: document.querySelector("#memory-status"),
+  studentModelId: document.querySelector("#student-model-id"),
   strategyNode: document.querySelector("#strategy-node"),
   currentStep: document.querySelector("#current-step"),
   teachingStage: document.querySelector("#teaching-stage"),
@@ -190,6 +192,8 @@ function updateRuntime(payload, replaceMessages = false) {
   elements.sessionId.textContent = payload.session_id;
   elements.planVersion.textContent = state.lesson_plan?.lesson_plan_version || "—";
   elements.problemStatus.textContent = runtime.problem_status || "pending";
+  elements.memoryStatus.textContent = runtime.memory_enabled ? "已启用" : "未启用";
+  elements.studentModelId.textContent = runtime.student_id || "—";
   elements.strategyNode.textContent = progress.current_strategy_node_id || "尚未规划";
   const currentNode = (state.teaching_strategy?.nodes || []).find(
     node => node.node_id === progress.current_strategy_node_id
@@ -204,16 +208,20 @@ function updateRuntime(payload, replaceMessages = false) {
   elements.rawStrategy.textContent = JSON.stringify(state.teaching_strategy, null, 2);
   elements.rawStudentModel.textContent = JSON.stringify(payload.student_model, null, 2);
   setArtifactStatus(elements.solutionReady, runtime.solution_ready);
-  setArtifactStatus(elements.verificationReady, runtime.verification_ready);
+  setArtifactStatus(
+    elements.verificationReady,
+    runtime.verification_ready,
+    runtime.verification_status === "needs_revision" ? "验证未通过，等待修订" : undefined,
+  );
   setArtifactStatus(elements.strategyReady, runtime.strategy_ready);
   setArtifactStatus(elements.summaryReady, runtime.summary_completed);
   renderSessions(payload.sessions || [], payload.session_id);
   if (replaceMessages) renderMessages(payload.messages || []);
 }
 
-function setArtifactStatus(element, ready) {
+function setArtifactStatus(element, ready, pendingTitle = "尚未生成") {
   element.classList.toggle("ready", Boolean(ready));
-  element.title = ready ? "已生成并缓存" : "尚未生成";
+  element.title = ready ? "已生成并缓存" : pendingTitle;
 }
 
 function renderSessions(sessions, activeId) {

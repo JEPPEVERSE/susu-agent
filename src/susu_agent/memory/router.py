@@ -61,7 +61,11 @@ class MemoryRouter:
                 content_excerpt=candidate.item.canonical_text,
                 version=candidate.item.version,
                 confidence=candidate.item.confidence,
-                structured_content=dict(candidate.item.metadata.get("card", {})),
+                structured_content=dict(
+                    candidate.item.metadata.get("card")
+                    or candidate.item.metadata.get("pattern")
+                    or {}
+                ),
             )
             for candidate in ranked
         ]
@@ -109,7 +113,7 @@ class MemoryRouter:
 
     @staticmethod
     def _is_applicable(item: MemoryItem, query: RetrievalQuery) -> bool:
-        card = item.metadata.get("card", {})
+        card = item.metadata.get("card") or item.metadata.get("pattern") or {}
         applicability = (
             card.get("applicability", {})
             if isinstance(card, dict)
