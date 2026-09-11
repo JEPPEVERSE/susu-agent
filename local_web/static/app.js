@@ -174,9 +174,9 @@ function renderMessages(messages) {
   if (!messages.length) {
     elements.messages.innerHTML = `
       <article class="welcome-card">
-        <span class="eyebrow">v0.2 LOCAL LAB</span>
+        <span class="eyebrow">v0.3 LOCAL LAB</span>
         <h2>从一道题开始</h2>
-        <p>输入一道新题后，系统会生成并验证解题图、建立教学策略，再进入每轮单 Agent 的教学执行。</p>
+        <p>输入一道新题后，系统会结构化题目、检索适用记忆、验证解题图并建立教学策略。</p>
       </article>`;
     return;
   }
@@ -186,7 +186,7 @@ function renderMessages(messages) {
 function updateRuntime(payload, replaceMessages = false) {
   const state = payload.teaching_state;
   const progress = state.teaching_progress || {};
-  const runtime = payload.v02_runtime || {};
+  const runtime = payload.v03_runtime || {};
   elements.sessionId.textContent = payload.session_id;
   elements.planVersion.textContent = state.lesson_plan?.lesson_plan_version || "—";
   elements.problemStatus.textContent = runtime.problem_status || "pending";
@@ -251,7 +251,7 @@ async function submitQuestion(event) {
   addMessage("user", question);
   elements.question.value = "";
   setBusy(true);
-  const thinking = addMessage("assistant", "v0.2 正在执行；新题首轮会依次求解、验证和规划", { thinking: true });
+  const thinking = addMessage("assistant", "v0.3 正在执行；新题首轮会依次结构化、检索、求解、验证和规划", { thinking: true });
   try {
     const payload = await request("/api/chat", {
       method: "POST",

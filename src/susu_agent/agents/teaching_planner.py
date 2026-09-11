@@ -1,6 +1,7 @@
-"""v0.2 一次性教学策略图规划 Agent。"""
+"""v0.3 记忆增强的一次性教学策略图规划 Agent。"""
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -10,7 +11,7 @@ from susu_agent.agents.instruction_loader import load_instruction
 from susu_agent.lesson_plan_loader import LessonPlanBundle
 from susu_agent.model_config import resolve_agent_model, supports_native_structured_output
 from susu_agent.schemas.solution import Solution
-from susu_agent.schemas.v02 import TeachingStrategy, VerificationReport
+from susu_agent.schemas.v03 import TeachingStrategy, VerificationReport
 from susu_agent.structured_output import build_json_output_instruction
 
 
@@ -70,7 +71,10 @@ def build_subject_level_policy(
             for step_id, question in questions
             if QUESTION_DIFFICULTY_ORDER[question.difficulty] == hardest
         ]
-    entry_step_id, entry_question = eligible[0] if eligible else (None, None)
+    entry_step_id, entry_question = eligible[0] if eligible else (
+        solution.steps[0].solution_step_id if solution.steps else None,
+        None,
+    )
     return {
         "subject": subject,
         "recorded_level_state": recorded_level_state,
@@ -94,12 +98,18 @@ def build_subject_level_policy(
 
 
 def compose_teaching_planner_instructions(lesson_plan: LessonPlanBundle) -> str:
+    lesson_context = lesson_plan.context
+    if os.getenv("MEMORY_ENABLED", "false").casefold() in {"1", "true", "yes", "on"}:
+        lesson_context = "\n\n".join(
+            lesson_plan.context_sections[heading][1]
+            for heading in lesson_plan.always_include_context_headings
+        )
     instruction = (
         load_instruction("teaching_planner_instruction.md").strip()
         + "\n\n<lesson_plan>\n"
         + lesson_plan.instruction
         + "\n\n"
-        + lesson_plan.context
+        + lesson_context
         + "\n</lesson_plan>"
     )
     if not USES_NATIVE_OUTPUT:
@@ -121,6 +131,7 @@ def build_teaching_planner_input(
     teacher_model: Mapping[str, Any],
     teaching_state: Mapping[str, Any],
     subject_level_policy: Mapping[str, Any] | None = None,
+    memory_context: Mapping[str, Any] | None = None,
 ) -> str:
     progress = teaching_state.get("teaching_progress", {})
     subject = teaching_state.get("lesson_plan", {}).get("subject", "math")
@@ -172,6 +183,9 @@ def build_teaching_planner_input(
     return json.dumps(
         {
             "verified_solution": solution_payload,
+            "problem_representation": teaching_state.get(
+                "problem_representation"
+            ),
             "verification_report": verification.model_dump(mode="json"),
             "student_model": student_model_context,
             "teacher_model": teacher_model,
@@ -183,6 +197,7 @@ def build_teaching_planner_input(
                 "teaching_progress": progress,
                 "learning_evidence": teaching_state.get("learning_evidence", []),
             },
+            "retrieved_teaching_memory": dict(memory_context or {}),
         },
         ensure_ascii=False,
         indent=2,

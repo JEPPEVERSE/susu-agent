@@ -140,6 +140,21 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
             ],
             "$comment": "由数学解题 Agent 生成的会话级内部解题路线。",
         },
+        "problem_representation": {
+            "type": ["object", "null"],
+            "$comment": "v0.3 题目结构投影，由 Pydantic 契约额外校验。",
+        },
+        "retrieval_cache": {
+            "type": "object",
+            "maxProperties": 30,
+            "additionalProperties": {"type": "object"},
+        },
+        "memory_update_proposal_ids": {
+            "type": "array",
+            "maxItems": 100,
+            "uniqueItems": True,
+            "items": {"type": "string", "maxLength": 200},
+        },
         "verification_report": {
             "type": ["object", "null"],
             "$comment": "由 VerificationReport Pydantic 模型执行严格校验。",
@@ -176,6 +191,16 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
                     "solution_question_id": {
                         "type": ["string", "null"],
                         "maxLength": 100,
+                    },
+                    "question_card_id": {
+                        "type": ["string", "null"],
+                        "maxLength": 200,
+                    },
+                    "retrieval_evidence_ids": {
+                        "type": "array",
+                        "maxItems": 30,
+                        "uniqueItems": True,
+                        "items": {"type": "string", "maxLength": 200},
                     },
                     "target_checkpoint_indices": {
                         "type": "array",
@@ -303,6 +328,22 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
             "required": ["architecture_version", "solution_revision", "summary_completed"],
             "additionalProperties": False,
         },
+        "v03_meta": {
+            "type": "object",
+            "properties": {
+                "architecture_version": {"type": "string", "const": "0.3"},
+                "memory_enabled": {"type": "boolean"},
+                "solution_revision": {"type": "integer", "minimum": 0},
+                "summary_completed": {"type": "boolean"},
+            },
+            "required": [
+                "architecture_version",
+                "memory_enabled",
+                "solution_revision",
+                "summary_completed"
+            ],
+            "additionalProperties": False,
+        },
         "personal_ai": {
             "type": "object",
             "properties": {
@@ -334,7 +375,10 @@ TEACHING_STATE_SCHEMA: dict[str, Any] = {
         "teaching_progress",
         "updated_at",
         "conversation_summary",
-        "v02_meta",
+        "v03_meta",
+        "problem_representation",
+        "retrieval_cache",
+        "memory_update_proposal_ids",
         "personal_ai",
     ],
     "additionalProperties": False,
@@ -349,6 +393,14 @@ TEACHING_STATE_VALIDATOR = Draft202012Validator(
 def validate_teaching_state(state: dict[str, Any]) -> None:
     """校验教学状态的 JSON 结构及跨字段运行时不变量。"""
     TEACHING_STATE_VALIDATOR.validate(state)
+    if state.get("problem_representation") is not None:
+        from susu_agent.schemas.problem_representation import ProblemRepresentation
+
+        ProblemRepresentation.model_validate(state["problem_representation"])
+    from susu_agent.schemas.memory import RetrievalResult
+
+    for value in state.get("retrieval_cache", {}).values():
+        RetrievalResult.model_validate(value)
     _validate_open_question_invariants(state)
 
 

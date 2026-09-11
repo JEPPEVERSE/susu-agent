@@ -114,6 +114,22 @@ class SolutionTests(unittest.TestCase):
                 "clarification_context": [],
             }
             state["solution"] = solution.model_dump(mode="json")
+            state["problem_representation"] = {
+                "schema_version": 1,
+                "problem_id": "problem_test",
+                "subject": "math",
+                "goal_type": "extremum",
+                "problem_type": "equation",
+                "objects": ["x", "y"],
+                "conditions": ["已知 x+y=2"],
+                "goal": solution.goal,
+                "structural_features": {"degrees_of_freedom": 2},
+                "concept_ids": [
+                    concept_id
+                    for step in solution.steps
+                    for concept_id in step.concept_ids
+                ],
+            }
             state["updated_at"] = datetime.now(timezone.utc).isoformat()
 
             repository.save(state, lesson_plan=lesson_plan)

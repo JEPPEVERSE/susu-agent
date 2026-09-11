@@ -1,6 +1,6 @@
-# susuAgent v0.2 本地测试页面
+# susuAgent v0.3 本地测试页面
 
-该页面直接使用 v0.2 `V02Orchestrator`。首次提交一道题时依次执行求解、验证、教学规划和教学执行；后续回答只执行教学执行 Agent。完成节点会触发 StudentModel 总结。
+该页面直接使用 v0.3 `V03Orchestrator`。首次提交一道题时依次执行题目结构化、记忆检索、求解、验证、教学规划和教学执行；后续回答由 Teaching Executor 执行，并可检索 Misconception Card。完成节点会触发 StudentModel 总结和受审核的记忆更新提案。
 
 ## 启动
 

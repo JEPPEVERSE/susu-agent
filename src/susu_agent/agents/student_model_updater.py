@@ -1,4 +1,4 @@
-"""v0.2 低频学生模型总结 Agent。"""
+"""v0.3 个人模型总结与长期记忆提案 Agent。"""
 
 import json
 from typing import Any, Mapping
@@ -7,7 +7,7 @@ from agents import Agent
 
 from susu_agent.agents.instruction_loader import load_instruction
 from susu_agent.model_config import resolve_agent_model, supports_native_structured_output
-from susu_agent.schemas.v02 import StudentModelPatch
+from susu_agent.schemas.v03 import StudentModelPatch
 from susu_agent.structured_output import build_json_output_instruction
 
 
@@ -91,6 +91,10 @@ def build_student_model_summarizer_input(
                     "conversation_summary", ""
                 ),
             },
+            "problem_representation": teaching_state.get(
+                "problem_representation"
+            ),
+            "retrieval_cache": teaching_state.get("retrieval_cache", {}),
             "student_model": student_model_context,
             "base_model_version": student_model.get("model_version", 1),
         },

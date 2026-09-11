@@ -19,9 +19,10 @@ from susu_agent.agents.math_solver import (
 from susu_agent.choice import Choice, ChoiceAction
 from susu_agent.context_builder import ContextBuilder, ContextMessage
 from susu_agent.lesson_plan_loader import LessonPlanBundle
+from susu_agent.memory.problem_parser import build_problem_representation
 from susu_agent.repositories.teaching_state_repository import TeachingStateRepository
 from susu_agent.repositories.student_model_repository import StudentModelRepository
-from susu_agent.orchestrator import V02Orchestrator
+from susu_agent.orchestrator import V03Orchestrator
 from susu_agent.schemas.solution import Solution, SolveOutcome
 from susu_agent.session import SessionInfo, SessionManager
 from susu_agent.structured_output import parse_structured_output
@@ -35,7 +36,7 @@ context_builder = ContextBuilder(recent_message_limit=6)
 
 @dataclass(frozen=True, slots=True)
 class TutorTurn:
-    """兼容旧调试入口；正式 v0.2 流程由 V02Orchestrator 执行。"""
+    """兼容旧调试入口；正式 v0.3 流程由 V03Orchestrator 执行。"""
 
     context_input: str
     teaching_state: dict[str, object]
@@ -213,6 +214,12 @@ async def ensure_math_solution(
         raise ValueError(questions or outcome.reason or "题目目前无法求解。")
     solution = outcome.solution
     validate_solution_lesson_plan_references(solution, lesson_plan)
+    representation = outcome.problem_representation or build_problem_representation(
+        problem_statement,
+        subject=lesson_plan.subject,
+        solution=solution,
+    )
+    teaching_state["problem_representation"] = representation.model_dump(mode="json")
     _attach_solution(teaching_state, solution)
     teaching_state_repository.save(teaching_state, lesson_plan=lesson_plan)
     logger.info(
@@ -315,7 +322,7 @@ async def stream_answer(
 
 
 async def main() -> None:
-    logger.info("Starting susuAgent v0.2 for subject %s", course_subject)
+    logger.info("Starting susuAgent v0.3 for subject %s", course_subject)
     print("欢迎使用速速提分 Agent！")
     print(f"当前学科：{course_subject}。请输入学习问题。")
     print("/new：开启新对话；/history：查看并切换历史会话。")
@@ -327,7 +334,7 @@ async def main() -> None:
         default_subject=course_subject,
     )
     student_model_repository = StudentModelRepository(session_manager.db_path)
-    orchestrator = V02Orchestrator(
+    orchestrator = V03Orchestrator(
         teaching_state_repository,
         student_model_repository,
         student_id=os.getenv("STUDENT_ID", "default_student"),
@@ -388,7 +395,7 @@ async def main() -> None:
                     teaching_state_repository,
                 )
             except Exception as error:
-                logger.exception("v0.2 teaching turn failed")
+                logger.exception("v0.3 teaching turn failed")
                 print(f"本轮教学执行失败（{type(error).__name__}）：{error}")
     finally:
         session_manager.close()

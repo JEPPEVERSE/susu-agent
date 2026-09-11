@@ -1,8 +1,10 @@
-"""v0.2 多 Agent 架构之间传递的结构化 artifact。"""
+"""v0.3 Agent artifact；模块名为 v0.2 调用方保留兼容。"""
 
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from susu_agent.schemas.memory import MemoryUpdateProposal
 
 
 class StrictModel(BaseModel):
@@ -15,7 +17,10 @@ class VerificationIssue(StrictModel):
     issue_type: Literal[
         "final_answer_error",
         "step_reasoning_error",
+        "derivation_gap",
+        "condition_omission",
         "lesson_plan_mismatch",
+        "evidence_insufficient",
     ]
     severity: Literal["warning", "error"]
     evidence: str = Field(min_length=1, max_length=2_000)
@@ -29,6 +34,8 @@ class VerificationReport(StrictModel):
     checked_solution_step_ids: list[str] = Field(default_factory=list, max_length=30)
     issues: list[VerificationIssue] = Field(default_factory=list, max_length=30)
     confidence: Literal["low", "medium", "high"]
+    checked_condition_indices: list[int] = Field(default_factory=list, max_length=50)
+    evidence_sufficient: bool = True
 
     @model_validator(mode="after")
     def validate_verdict(self) -> Self:
@@ -38,6 +45,16 @@ class VerificationReport(StrictModel):
             raise ValueError("A passed verification cannot contain errors.")
         if self.verdict == "needs_revision" and not self.issues:
             raise ValueError("A revision verdict must explain at least one issue.")
+        if self.verdict == "passed" and not self.evidence_sufficient:
+            raise ValueError("A passed verification requires sufficient evidence.")
+        if not self.evidence_sufficient and not any(
+            issue.issue_type == "evidence_insufficient" for issue in self.issues
+        ):
+            raise ValueError("Insufficient evidence requires an evidence issue.")
+        if len(self.checked_condition_indices) != len(
+            set(self.checked_condition_indices)
+        ) or any(index < 0 for index in self.checked_condition_indices):
+            raise ValueError("Checked condition indices must be unique and non-negative.")
         return self
 
 
@@ -58,6 +75,8 @@ class TeachingStrategyNode(StrictModel):
     node_id: str = Field(pattern=r"^teach_[0-9]+$", max_length=100)
     solution_step_id: str | None = Field(default=None, max_length=100)
     solution_question_id: str | None = Field(default=None, max_length=100)
+    question_card_id: str | None = Field(default=None, max_length=200)
+    retrieval_evidence_ids: list[str] = Field(default_factory=list, max_length=30)
     goal: str = Field(min_length=1, max_length=1_000)
     teaching_action: Literal["ask_question", "give_hint", "explain", "verify_answer"]
     prompt_intent: str = Field(min_length=1, max_length=1_000)
@@ -79,6 +98,10 @@ class TeachingStrategyNode(StrictModel):
         ]
         if invalid_terminal_targets:
             raise ValueError("Complete and replan transitions cannot target another node.")
+        if self.question_card_id is not None and self.teaching_action != "ask_question":
+            raise ValueError("Question Cards can only be bound to question nodes.")
+        if len(self.retrieval_evidence_ids) != len(set(self.retrieval_evidence_ids)):
+            raise ValueError("Node retrieval evidence ids must be unique.")
         return self
 
 
@@ -102,6 +125,14 @@ class TeachingStrategy(StrictModel):
     )
     completion_criteria: list[str] = Field(default_factory=list, max_length=20)
     replan_triggers: list[str] = Field(default_factory=list, max_length=20)
+    retrieval_evidence_ids: list[str] = Field(default_factory=list, max_length=100)
+    retrieval_failure_type: Literal[
+        "retrieval_empty",
+        "low_relevance",
+        "low_coverage",
+        "cross_domain_required",
+        "uncertain",
+    ] | None = None
 
     @model_validator(mode="after")
     def validate_graph(self) -> Self:
@@ -124,6 +155,8 @@ class TeachingStrategy(StrictModel):
         ]
         if len(difficulty_ids) != len(set(difficulty_ids)):
             raise ValueError("Anticipated difficulty ids must be unique.")
+        if len(self.retrieval_evidence_ids) != len(set(self.retrieval_evidence_ids)):
+            raise ValueError("Strategy retrieval evidence ids must be unique.")
         return self
 
 
@@ -134,6 +167,8 @@ class LearningEvidence(StrictModel):
     assessment: Literal["positive", "negative", "mixed", "uncertain"]
     confidence: Literal["low", "medium", "high"]
     source_question_id: str | None = Field(default=None, max_length=100)
+    misconception_card_ids: list[str] = Field(default_factory=list, max_length=20)
+    retrieval_evidence_ids: list[str] = Field(default_factory=list, max_length=30)
 
 
 class ExecutionStateDelta(StrictModel):
@@ -177,6 +212,10 @@ class TeachingExecution(StrictModel):
     ]
     state_delta: ExecutionStateDelta
     learning_evidence: list[LearningEvidence] = Field(default_factory=list, max_length=20)
+    diagnosed_misconception_card_ids: list[str] = Field(
+        default_factory=list, max_length=20
+    )
+    retrieval_evidence_ids: list[str] = Field(default_factory=list, max_length=30)
 
     @model_validator(mode="after")
     def validate_turn_contract(self) -> Self:
@@ -187,6 +226,12 @@ class TeachingExecution(StrictModel):
             )
         if not self.feedback.strip() and delta.open_question is None:
             raise ValueError("A teaching turn must contain feedback or an open question.")
+        if len(self.retrieval_evidence_ids) != len(set(self.retrieval_evidence_ids)):
+            raise ValueError("Execution retrieval evidence ids must be unique.")
+        if len(self.diagnosed_misconception_card_ids) != len(
+            set(self.diagnosed_misconception_card_ids)
+        ):
+            raise ValueError("Diagnosed Misconception Card ids must be unique.")
         return self
 
 
@@ -236,3 +281,6 @@ class StudentModelPatch(StrictModel):
         default_factory=list, max_length=30
     )
     insufficient_evidence: list[str] = Field(default_factory=list, max_length=30)
+    memory_update_proposals: list[MemoryUpdateProposal] = Field(
+        default_factory=list, max_length=20
+    )

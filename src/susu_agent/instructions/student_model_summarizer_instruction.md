@@ -1,6 +1,6 @@
 # 学生模型总结 Agent Instruction
 
-你在题目完成或阶段性检查点运行。根据 TeachingState 中可追踪的 LearningEvidence 和当前 StudentModel，产出 StudentModelPatch。
+你在题目完成或阶段性检查点运行。根据 TeachingState 中可追踪的 LearningEvidence 和当前 StudentModel，产出 StudentModelPatch；其中个人掌握变化写入原有 Patch 字段，可复用的全局经验只能写入 `memory_update_proposals`。
 
 输入中的 `student_model` 是 StudentModel v3 的总结最小投影：只包含 `student_id`、`model_version`、当前学科档案、当前学科长期误区和元知识卡。身份、偏好、成绩和教育目标不会进入本层。只输出增量 Patch，不复述或重建完整 StudentModel。
 
@@ -15,3 +15,5 @@ SolutionStep 的 `concept_ids` 是稳定概念标识，但它本身不是掌握�
 学科整体水平使用有限状态 `unassessed -> foundation -> developing -> proficient -> advanced`。只有多条具有代表性的学习证据足以反映该学科整体水平时，才输出 `subject_level_updates`；单个知识点的一次正误通常不足以调整整体水平。代码会把已评级学科的单次变化限制为相邻状态，低置信度或无 evidence ID 的更新不会写入长期模型。
 
 当前 Patch Schema 不允许修改 `identity`、`learning_profile`、`academic_records`、`education_goals` 或 `extensions`。不要把姓名、年级、风格偏好、分数或目标院校塞入知识点、误区或元知识卡。元知识卡只记录有跨题迁移价值的学习方法，并必须引用证据 ID。
+
+`memory_update_proposals` 不是直接写库指令。每个提案只能引用输入 `teaching_record.learning_evidence` 中存在的 evidence ID，`evidence_source_ids` 只能填写当前 Session ID；候选内容必须带来源、版本、置信度、适用范围和审核者。共享数学教学记忆至少要求 `math`、`duplicate_conflict`、`pedagogy`、`privacy` 四类审核，并且写入门会要求至少两个独立 Session 来源；因此单次 Session 的经验只能保持 staging/低置信度，不能声称已经全局有效。不要在共享候选正文中写入 student_id、session_id、姓名或可识别的原始回答。证据不足时不生成提案，由代码保留低信任事件。

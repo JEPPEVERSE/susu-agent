@@ -1,4 +1,4 @@
-"""v0.2 每轮教学执行与表达 Agent。"""
+"""v0.3 语境化诊断与单轮教学表达 Agent。"""
 
 import json
 from dataclasses import asdict
@@ -11,7 +11,7 @@ from susu_agent.agents.instruction_loader import load_instruction
 from susu_agent.context_builder import ContextMessage
 from susu_agent.lesson_plan_loader import LessonPlanBundle
 from susu_agent.model_config import resolve_agent_model, supports_native_structured_output
-from susu_agent.schemas.v02 import TeachingExecution
+from susu_agent.schemas.v03 import TeachingExecution
 from susu_agent.structured_output import build_json_output_instruction
 from susu_agent.teaching_runtime import MAX_NODE_ATTEMPTS
 
@@ -101,6 +101,7 @@ def build_teaching_executor_input(
     student_model: Mapping[str, Any],
     teacher_model: Mapping[str, Any],
     recent_messages: Sequence[ContextMessage],
+    memory_context: Mapping[str, Any] | None = None,
 ) -> str:
     strategy = teaching_state.get("teaching_strategy")
     progress = teaching_state.get("teaching_progress", {})
@@ -189,6 +190,9 @@ def build_teaching_executor_input(
     return json.dumps(
         {
             "current_user_message": current_user_message,
+            "problem_representation": teaching_state.get(
+                "problem_representation"
+            ),
             "current_teaching_node": current_node,
             "current_solution_step": current_step,
             "available_strategy_nodes": available_nodes,
@@ -215,6 +219,7 @@ def build_teaching_executor_input(
                 student_model, teaching_state, current_step
             ),
             "teacher_model": teacher_model,
+            "retrieved_misconception_memory": dict(memory_context or {}),
             "recent_messages": [asdict(message) for message in recent_messages[-4:]],
         },
         ensure_ascii=False,

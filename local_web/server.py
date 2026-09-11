@@ -1,4 +1,4 @@
-"""susu-agent v0.2 的本地轻量测试页面。"""
+"""susu-agent v0.3 的本地轻量测试页面。"""
 
 import argparse
 import asyncio
@@ -24,7 +24,7 @@ if str(SRC_DIRECTORY) not in sys.path:
 from dotenv import load_dotenv  # noqa: E402
 
 from susu_agent.context_builder import ContextMessage  # noqa: E402
-from susu_agent.orchestrator import V02Orchestrator  # noqa: E402
+from susu_agent.orchestrator import V03Orchestrator  # noqa: E402
 from susu_agent.repositories.student_model_repository import (  # noqa: E402
     StudentModelRepository,
 )
@@ -53,7 +53,7 @@ class TutorWebRuntime:
             self._session_manager.db_path
         )
         self._student_id = os.getenv("STUDENT_ID", "default_student")
-        self._orchestrator = V02Orchestrator(
+        self._orchestrator = V03Orchestrator(
             self._state_repository,
             self._student_repository,
             student_id=self._student_id,
@@ -155,18 +155,19 @@ class TutorWebRuntime:
                 self._student_id,
                 os.getenv("COURSE_GRADE", "unknown"),
             ),
-            "v02_runtime": {
-                "architecture_version": "0.2",
+            "v03_runtime": {
+                "architecture_version": "0.3",
+                "memory_enabled": self._orchestrator.memory_enabled,
                 "problem_status": state.get("original_problem", {}).get(
                     "status", "pending"
                 ),
                 "solution_ready": state.get("solution") is not None,
                 "verification_ready": state.get("verification_report") is not None,
                 "strategy_ready": state.get("teaching_strategy") is not None,
-                "solution_revision": state.get("v02_meta", {}).get(
+                "solution_revision": state.get("v03_meta", {}).get(
                     "solution_revision", 0
                 ),
-                "summary_completed": state.get("v02_meta", {}).get(
+                "summary_completed": state.get("v03_meta", {}).get(
                     "summary_completed", False
                 ),
             },
@@ -321,7 +322,7 @@ class TutorRequestHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="启动 susuAgent v0.2 测试页面。")
+    parser = argparse.ArgumentParser(description="启动 susuAgent v0.3 测试页面。")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
@@ -331,7 +332,7 @@ def main() -> None:
     TutorRequestHandler.runtime = runtime
     server = ThreadingHTTPServer((args.host, args.port), TutorRequestHandler)
     url = f"http://{args.host}:{args.port}"
-    print(f"susuAgent v0.2 测试页面已启动：{url}")
+    print(f"susuAgent v0.3 测试页面已启动：{url}")
     print("按 Ctrl+C 停止服务。")
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()

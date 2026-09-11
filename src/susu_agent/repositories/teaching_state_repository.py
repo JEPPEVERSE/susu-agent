@@ -9,9 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from susu_agent.lesson_plan_loader import LessonPlanBundle, LessonPlanLoader
+from susu_agent.memory.problem_parser import build_problem_representation
+from susu_agent.memory.problem_parser import build_problem_representation
 from susu_agent.schemas.solution import Solution
+from susu_agent.schemas.memory import MemoryType
+from susu_agent.schemas.problem_representation import ProblemRepresentation
 from susu_agent.schemas.teaching_state import validate_teaching_state
-from susu_agent.schemas.v02 import LearningEvidence, TeachingStrategy, VerificationReport
+from susu_agent.schemas.v03 import LearningEvidence, TeachingStrategy, VerificationReport
 from susu_agent.teaching_runtime import validate_strategy_runtime_contract
 
 
@@ -138,6 +142,9 @@ class TeachingStateRepository:
                 selected_lesson_plan
             ),
             "solution": None,
+            "problem_representation": None,
+            "retrieval_cache": {},
+            "memory_update_proposal_ids": [],
             "verification_report": None,
             "teaching_strategy": None,
             "learning_evidence": [],
@@ -151,8 +158,9 @@ class TeachingStateRepository:
             },
             "updated_at": now,
             "conversation_summary": "",
-            "v02_meta": {
-                "architecture_version": "0.2",
+            "v03_meta": {
+                "architecture_version": "0.3",
+                "memory_enabled": False,
                 "solution_revision": 0,
                 "summary_completed": False,
             },
@@ -172,6 +180,12 @@ class TeachingStateRepository:
         """把旧状态升级到当前 Schema，并同步由应用维护的教案元数据。"""
         state = deepcopy(stored_state)
         schema_version = state.get("schema_version")
+        stored_digest = state.get("lesson_plan", {}).get("content_digest")
+        lesson_plan_changed = (
+            schema_version == 7
+            and isinstance(stored_digest, str)
+            and stored_digest != lesson_plan.content_digest
+        )
         if schema_version == 1:
             state = self._upgrade_v1_state(state, lesson_plan)
         elif schema_version == 2:
@@ -190,8 +204,66 @@ class TeachingStateRepository:
         if state.get("schema_version") == 6:
             state = self._upgrade_v6_state(state)
 
+        if lesson_plan_changed:
+            self._invalidate_for_lesson_plan_change(state)
+
         state["lesson_plan"] = self._lesson_plan_metadata(lesson_plan)
+        state.setdefault("problem_representation", None)
+        if state.get("solution") is not None and state["problem_representation"] is None:
+            original = state.get("original_problem", {})
+            problem_text = original.get("problem_statement", "")
+            if problem_text:
+                state["problem_representation"] = build_problem_representation(
+                    problem_text,
+                    subject=lesson_plan.subject,
+                    solution=Solution.model_validate(state["solution"]),
+                ).model_dump(mode="json")
+        if state.get("solution") is not None and state["problem_representation"] is None:
+            original = state.get("original_problem", {})
+            problem_text = original.get("problem_statement", "")
+            if problem_text:
+                state["problem_representation"] = build_problem_representation(
+                    problem_text,
+                    subject=lesson_plan.subject,
+                    solution=Solution.model_validate(state["solution"]),
+                ).model_dump(mode="json")
+        state.setdefault("retrieval_cache", {})
+        state.setdefault("memory_update_proposal_ids", [])
+        legacy_meta = state.pop("v02_meta", {})
+        v03_meta = state.setdefault("v03_meta", {})
+        v03_meta.setdefault("architecture_version", "0.3")
+        v03_meta.setdefault("memory_enabled", False)
+        v03_meta.setdefault("solution_revision", legacy_meta.get("solution_revision", 0))
+        v03_meta.setdefault("summary_completed", legacy_meta.get("summary_completed", False))
+        for question in state.setdefault("open_question_history", []):
+            question.setdefault("question_card_id", None)
+            question.setdefault("retrieval_evidence_ids", [])
         return state
+
+    @staticmethod
+    def _invalidate_for_lesson_plan_change(state: dict[str, Any]) -> None:
+        """教案内容变化后清除依赖旧快照的题目级 artifact。"""
+        now = datetime.now(timezone.utc).isoformat()
+        state["solution"] = None
+        state["problem_representation"] = None
+        state["verification_report"] = None
+        state["teaching_strategy"] = None
+        state["retrieval_cache"] = {}
+        state["memory_update_proposal_ids"] = []
+        if isinstance(state.get("original_problem"), dict):
+            state["original_problem"]["status"] = "pending"
+        state["teaching_progress"] = {
+            "current_strategy_node_id": None,
+            "completed_strategy_node_ids": [],
+            "satisfied_checkpoint_ids": [],
+            "attempts_by_node": {},
+            "hint_indices_by_node": {},
+        }
+        for question in state.get("open_question_history", []):
+            if question.get("status") == "open":
+                question["status"] = "abandoned"
+                question["resolved_at"] = now
+        state.setdefault("v03_meta", {})["summary_completed"] = False
 
     def _upgrade_v1_state(
         self,
@@ -226,7 +298,7 @@ class TeachingStateRepository:
 
         state["lesson_plan"] = self._lesson_plan_metadata(lesson_plan)
         self._add_solution_fields(state)
-        self._add_v02_fields(state)
+        self._add_v03_fields(state)
         state["schema_version"] = 5
         return state
 
@@ -262,20 +334,20 @@ class TeachingStateRepository:
 
         state["lesson_plan"] = self._lesson_plan_metadata(lesson_plan)
         self._add_solution_fields(state)
-        self._add_v02_fields(state)
+        self._add_v03_fields(state)
         state["schema_version"] = 5
         return state
 
     def _upgrade_v3_state(self, state: dict[str, Any]) -> dict[str, Any]:
         """为既有教案状态加入题目级 Solution 和执行游标。"""
         self._add_solution_fields(state)
-        self._add_v02_fields(state)
+        self._add_v03_fields(state)
         state["schema_version"] = 5
         return state
 
     def _upgrade_v4_state(self, state: dict[str, Any]) -> dict[str, Any]:
-        """为 v0.1 状态加入 v0.2 artifact、执行游标与身份预留。"""
-        self._add_v02_fields(state)
+        """为旧状态加入结构化 artifact、执行游标与身份预留。"""
+        self._add_v03_fields(state)
         state["schema_version"] = 5
         return state
 
@@ -326,7 +398,7 @@ class TeachingStateRepository:
 
         # Verifier 与 TeachingPlanner 的职责及上下文契约均已改变。旧 artifact
         # 即使标记为 passed 也不能作为新契约下的缓存命中；保留 Solution，下一轮
-        # 按 v0.2 schema 重新验证并规划。
+        # 按当前 schema 重新验证并规划。
         has_cached_problem_artifacts = any(
             value is not None
             for value in (
@@ -355,7 +427,7 @@ class TeachingStateRepository:
 
     @staticmethod
     def _upgrade_v6_state(state: dict[str, Any]) -> dict[str, Any]:
-        """迁移到 v0.2 单一状态源：移除学生模型副本和派生游标。"""
+        """迁移到单一状态源：移除学生模型副本和派生游标。"""
         # v6 策略没有检查点累积和有限重试契约。继续复用可能保留
         # correct 自循环，因此只保留已验证解法，下一轮重新规划策略。
         if state.get("teaching_strategy") is not None:
@@ -470,7 +542,7 @@ class TeachingStateRepository:
             question.setdefault("solution_question_id", None)
 
     @staticmethod
-    def _add_v02_fields(state: dict[str, Any]) -> None:
+    def _add_v03_fields(state: dict[str, Any]) -> None:
         state.setdefault("verification_report", None)
         state.setdefault("teaching_strategy", None)
         state.setdefault("learning_evidence", [])
@@ -478,8 +550,13 @@ class TeachingStateRepository:
             "current_strategy_node_id", None
         )
         state.setdefault(
-            "v02_meta",
-            {"architecture_version": "0.2", "solution_revision": 0, "summary_completed": False},
+            "v03_meta",
+            {
+                "architecture_version": "0.3",
+                "memory_enabled": False,
+                "solution_revision": 0,
+                "summary_completed": False,
+            },
         )
         state.setdefault(
             "personal_ai",
@@ -528,7 +605,7 @@ class TeachingStateRepository:
             state["lesson_plan"]["subject"]
         )
         self._validate_lesson_plan_references(state, selected_lesson_plan)
-        self._validate_v02_artifacts(state)
+        self._validate_v03_artifacts(state)
         validate_teaching_state(state)
 
         with closing(sqlite3.connect(self._db_path)) as connection:
@@ -557,9 +634,15 @@ class TeachingStateRepository:
         logger.debug("Saved teaching state for session %s", state["session_id"])
 
     @staticmethod
-    def _validate_v02_artifacts(state: dict[str, Any]) -> None:
+    def _validate_v03_artifacts(state: dict[str, Any]) -> None:
         solution_data = state.get("solution")
         solution = Solution.model_validate(solution_data) if solution_data is not None else None
+        representation_data = state.get("problem_representation")
+        representation = (
+            ProblemRepresentation.model_validate(representation_data)
+            if representation_data is not None
+            else None
+        )
         problem_status = state.get("original_problem", {}).get("status")
         if solution is not None and problem_status != "solved":
             raise ValueError("A Solution artifact requires problem status 'solved'.")
@@ -568,6 +651,20 @@ class TeachingStateRepository:
             for field in ("solution", "verification_report", "teaching_strategy")
         ):
             raise ValueError("An unresolved problem cannot contain downstream artifacts.")
+        if solution is not None and representation is None:
+            raise ValueError("A v0.3 Solution requires ProblemRepresentation.")
+        if solution is not None and representation is not None:
+            solution_concepts = {
+                concept_id
+                for step in solution.steps
+                for concept_id in step.concept_ids
+            }
+            missing_concepts = solution_concepts - set(representation.concept_ids)
+            if missing_concepts:
+                raise ValueError(
+                    "ProblemRepresentation omits Solution concepts: "
+                    f"{sorted(missing_concepts)!r}."
+                )
         report_data = state.get("verification_report")
         if report_data is not None:
             report = VerificationReport.model_validate(report_data)
@@ -576,6 +673,12 @@ class TeachingStateRepository:
             known_steps = {step.solution_step_id for step in solution.steps}
             if report.verdict == "passed" and set(report.checked_solution_step_ids) != known_steps:
                 raise ValueError("A passed verification must check every Solution step.")
+            if report.verdict == "passed" and representation is not None:
+                expected_conditions = set(range(len(representation.conditions)))
+                if set(report.checked_condition_indices) != expected_conditions:
+                    raise ValueError(
+                        "A passed verification must check every represented condition."
+                    )
         strategy_data = state.get("teaching_strategy")
         if strategy_data is not None:
             if solution is None or report_data is None:
@@ -602,6 +705,38 @@ class TeachingStateRepository:
                         raise ValueError(
                             "Teaching strategy binds a Solution question to the wrong step."
                         )
+            planning_cache = state.get("retrieval_cache", {}).get("planning", {})
+            retrieved = {
+                item.get("memory_id"): item.get("memory_type")
+                for item in planning_cache.get("evidence", [])
+                if isinstance(item, dict)
+            }
+            referenced_memory_ids = set(strategy.retrieval_evidence_ids)
+            referenced_memory_ids.update(
+                memory_id
+                for node in strategy.nodes
+                for memory_id in node.retrieval_evidence_ids
+            )
+            referenced_memory_ids.update(
+                node.question_card_id
+                for node in strategy.nodes
+                if node.question_card_id is not None
+            )
+            unknown_memory_ids = referenced_memory_ids - set(retrieved)
+            if unknown_memory_ids:
+                raise ValueError(
+                    "Teaching strategy references unreturned memory: "
+                    f"{sorted(unknown_memory_ids)!r}."
+                )
+            invalid_question_cards = {
+                node.question_card_id
+                for node in strategy.nodes
+                if node.question_card_id is not None
+                and retrieved.get(node.question_card_id)
+                != MemoryType.QUESTION_CARD.value
+            }
+            if invalid_question_cards:
+                raise ValueError("Teaching strategy references a non-Question Card.")
             unknown_difficulty_steps = {
                 step_id
                 for difficulty in strategy.anticipated_difficulties

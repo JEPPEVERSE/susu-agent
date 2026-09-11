@@ -1,4 +1,4 @@
-"""v0.2 解题图验证 Agent。"""
+"""v0.3 数学正确性边界 Agent。"""
 
 import json
 from dataclasses import dataclass
@@ -9,7 +9,8 @@ from susu_agent.agents.instruction_loader import load_instruction
 from susu_agent.lesson_plan_loader import LessonPlanBundle
 from susu_agent.model_config import resolve_agent_model, supports_native_structured_output
 from susu_agent.schemas.solution import Solution
-from susu_agent.schemas.v02 import VerificationReport
+from susu_agent.schemas.problem_representation import ProblemRepresentation
+from susu_agent.schemas.v03 import VerificationReport
 from susu_agent.structured_output import build_json_output_instruction
 
 
@@ -40,6 +41,7 @@ def build_solution_verifier_input(
     problem_statement: str,
     solution: Solution,
     lesson_plan: LessonPlanBundle,
+    problem_representation: ProblemRepresentation | None = None,
 ) -> str:
     referenced_step_ids = tuple(
         dict.fromkeys(step.lesson_plan_step_id for step in solution.steps)
@@ -85,6 +87,10 @@ def build_solution_verifier_input(
     return json.dumps(
         {
             "origin_problem": problem_statement,
+            "problem_representation": (
+                problem_representation.model_dump(mode="json")
+                if problem_representation is not None else None
+            ),
             "solution": solution_projection,
             "lesson_plan": {
                 "subject": lesson_plan.subject,

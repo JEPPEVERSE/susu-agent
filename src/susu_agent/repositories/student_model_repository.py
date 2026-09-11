@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from susu_agent.schemas.students import SUBJECTS, validate_student_model
-from susu_agent.schemas.v02 import StudentModelPatch
+from susu_agent.schemas.v03 import StudentModelPatch
 
 
 class StudentModelRepository:
