@@ -19,6 +19,7 @@ from susu_agent.schemas.v02 import (
     TeachingStrategy,
     TeachingStrategyNode,
     TeachingTransition,
+    VerificationIssue,
     VerificationReport,
 )
 
@@ -28,6 +29,96 @@ def result(value: object) -> SimpleNamespace:
 
 
 class V02OrchestratorTests(unittest.TestCase):
+    @patch("susu_agent.orchestrator.Runner.run", new_callable=AsyncMock)
+    def test_interrupted_revision_resumes_from_persisted_feedback(
+        self, mock_run: AsyncMock
+    ) -> None:
+        solution = Solution(
+            goal="完成测试题",
+            strategy_summary="先明确目标。",
+            steps=[
+                SolutionStep(
+                    solution_step_id="step_0",
+                    lesson_plan_step_id="S1",
+                    title="明确目标",
+                    goal="明确目标",
+                    derivation="识别题目要求。",
+                    result="目标明确。",
+                )
+            ],
+            final_answer="测试答案",
+        )
+        needs_revision = VerificationReport(
+            verdict="needs_revision",
+            summary="第一步需要补充依据。",
+            checked_solution_step_ids=["step_0"],
+            issues=[
+                VerificationIssue(
+                    issue_id="issue_0",
+                    affected_solution_step_ids=["step_0"],
+                    issue_type="derivation_gap",
+                    severity="error",
+                    evidence="缺少必要推导。",
+                    revision_instruction="补充必要推导。",
+                )
+            ],
+            confidence="high",
+        )
+        passed = VerificationReport(
+            verdict="passed",
+            summary="修订后的解题图通过验证。",
+            checked_solution_step_ids=["step_0"],
+            confidence="high",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_directory:
+            database = Path(temp_directory) / "runtime.db"
+            states = TeachingStateRepository(database)
+            orchestrator = V02Orchestrator(
+                states,
+                StudentModelRepository(database),
+                memory_enabled=False,
+            )
+            state, lesson_plan = states.get_or_create_with_lesson_plan("problem_0")
+            state["original_problem"] = {
+                "problem_statement": "测试题",
+                "status": "pending",
+                "clarification_questions": [],
+                "clarification_context": [],
+            }
+            mock_run.side_effect = [
+                result(SolveOutcome(status="solved", solution=solution)),
+                result(needs_revision),
+                RuntimeError("temporary provider failure"),
+            ]
+
+            with self.assertRaisesRegex(RuntimeError, "temporary provider failure"):
+                asyncio.run(
+                    orchestrator._solve_and_verify(state, lesson_plan, "测试题")
+                )
+
+            persisted_state, lesson_plan = states.get_or_create_with_lesson_plan(
+                "problem_0"
+            )
+            mock_run.reset_mock()
+            mock_run.side_effect = [
+                result(SolveOutcome(status="solved", solution=solution)),
+                result(passed),
+            ]
+            resumed_state, response = asyncio.run(
+                orchestrator._solve_and_verify(
+                    persisted_state, lesson_plan, "测试题"
+                )
+            )
+
+        self.assertIsNone(response)
+        self.assertEqual(resumed_state["verification_report"]["verdict"], "passed")
+        self.assertEqual(resumed_state["v03_meta"]["solution_revision"], 1)
+        self.assertEqual(mock_run.await_count, 2)
+        resumed_solver_input = mock_run.await_args_list[0].kwargs["input"]
+        self.assertIn('"previous_solution": {', resumed_solver_input)
+        self.assertIn('"revision_context": {', resumed_solver_input)
+
     def test_unplanned_state_is_not_mistaken_for_completed_teaching(self) -> None:
         with tempfile.TemporaryDirectory() as temp_directory:
             database = Path(temp_directory) / "runtime.db"
@@ -36,6 +127,7 @@ class V02OrchestratorTests(unittest.TestCase):
             orchestrator = V02Orchestrator(
                 states,
                 StudentModelRepository(database),
+                memory_enabled=False,
             )
 
             summarized = asyncio.run(
@@ -61,6 +153,7 @@ class V02OrchestratorTests(unittest.TestCase):
             orchestrator = V02Orchestrator(
                 TeachingStateRepository(database),
                 StudentModelRepository(database),
+                memory_enabled=False,
             )
             response, state = asyncio.run(
                 orchestrator.run_turn("problem_0", "求函数最大值", [])
@@ -79,6 +172,7 @@ class V02OrchestratorTests(unittest.TestCase):
                 V02Orchestrator(
                     TeachingStateRepository(database, default_subject="physics"),
                     StudentModelRepository(database),
+                    memory_enabled=False,
                 )
 
     @patch("susu_agent.orchestrator.Runner.run", new_callable=AsyncMock)
@@ -140,7 +234,7 @@ class V02OrchestratorTests(unittest.TestCase):
             ],
         )
         first_execution = TeachingExecution(
-            feedback="先说说：",
+            feedback="",
             assessment="not_applicable",
             state_delta=ExecutionStateDelta(
                 open_question="题目要求什么？",
@@ -186,6 +280,7 @@ class V02OrchestratorTests(unittest.TestCase):
             orchestrator = V02Orchestrator(
                 TeachingStateRepository(database),
                 StudentModelRepository(database),
+                memory_enabled=False,
             )
 
             async def run() -> tuple[str, str]:
@@ -197,7 +292,7 @@ class V02OrchestratorTests(unittest.TestCase):
 
             first_response, second_response = asyncio.run(run())
 
-        self.assertEqual(first_response, "先说说：\n\n题目要求什么？")
+        self.assertEqual(first_response, "题目要求什么？")
         self.assertEqual(second_response, second_execution.feedback)
         self.assertEqual(mock_run.await_count, 7)
         self.assertEqual(

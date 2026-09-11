@@ -71,6 +71,8 @@ def _classify_goal(text: str) -> str:
 
 
 def _classify_problem(text: str) -> str:
+    if any(value in text for value in ("三角", "sin", "cos", "tan")):
+        return "trigonometry"
     if any(value in text for value in ("不等式", "inequality", "≤", "≥")):
         return "inequality"
     if any(value in text for value in ("函数", "function")):

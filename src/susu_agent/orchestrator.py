@@ -146,6 +146,16 @@ class V03Orchestrator:
         state, lesson_plan = self.teaching_states.get_or_create_with_lesson_plan(
             session_id
         )
+        previous_memory_mode = state.get("v03_meta", {}).get("memory_enabled")
+        if (
+            isinstance(previous_memory_mode, bool)
+            and previous_memory_mode != self.memory_enabled
+            and any(
+                state.get(field) is not None
+                for field in ("solution", "verification_report", "teaching_strategy")
+            )
+        ):
+            self._invalidate_for_memory_mode_change(state)
         state.setdefault("v03_meta", {})["memory_enabled"] = self.memory_enabled
         if self.memory_repository is not None:
             index_lesson_plan(self.memory_repository, lesson_plan)
@@ -186,7 +196,33 @@ class V03Orchestrator:
             )
         next_state = apply_teaching_execution(state, execution)
         self.teaching_states.save(next_state, lesson_plan=lesson_plan)
-        return render_teaching_response(execution), next_state
+        return render_teaching_response(execution, state), next_state
+
+    @staticmethod
+    def _invalidate_for_memory_mode_change(state: dict[str, Any]) -> None:
+        """记忆开关改变后，废弃依赖旧上下文生成的题目级 artifact。"""
+        now = datetime.now(timezone.utc).isoformat()
+        state["solution"] = None
+        state["problem_representation"] = None
+        state["verification_report"] = None
+        state["teaching_strategy"] = None
+        state["retrieval_cache"] = {}
+        state["memory_update_proposal_ids"] = []
+        if isinstance(state.get("original_problem"), dict):
+            state["original_problem"]["status"] = "pending"
+        state["teaching_progress"] = {
+            "current_strategy_node_id": None,
+            "completed_strategy_node_ids": [],
+            "satisfied_checkpoint_ids": [],
+            "attempts_by_node": {},
+            "hint_indices_by_node": {},
+        }
+        for question in state.get("open_question_history", []):
+            if question.get("status") == "open":
+                question["status"] = "abandoned"
+                question["resolved_at"] = now
+            question["solution_question_id"] = None
+        state.setdefault("v03_meta", {})["summary_completed"] = False
 
     async def summarize_if_needed(self, session_id: str) -> bool:
         """在学生回复已经返回后执行低频长期模型总结。"""
@@ -265,9 +301,29 @@ class V03Orchestrator:
             solver_problem += "\n\n学生补充信息：\n" + "\n".join(
                 f"- {item}" for item in context_items
             )
-        revision_context: dict[str, Any] | None = None
-        previous_solution: dict[str, Any] | None = None
-        for revision in range(self.max_solution_revisions + 1):
+        stored_report = state.get("verification_report")
+        can_resume_revision = (
+            state.get("solution") is not None
+            and isinstance(stored_report, Mapping)
+            and stored_report.get("verdict") == "needs_revision"
+        )
+        if can_resume_revision:
+            previous_solution = dict(state["solution"])
+            revision_context = dict(stored_report)
+            first_revision = int(
+                state.get("v03_meta", {}).get("solution_revision", 0)
+            ) + 1
+            logger.info(
+                "Resuming solution revision %d for session %s",
+                first_revision,
+                state["session_id"],
+            )
+        else:
+            previous_solution = None
+            revision_context = None
+            first_revision = 0
+
+        for revision in range(first_revision, self.max_solution_revisions + 1):
             solution_memory = (
                 self._retrieve_solution_memory(state) if self.memory_enabled else None
             )
@@ -347,7 +403,8 @@ class V03Orchestrator:
             revision_context = report.model_dump(mode="json")
         raise RuntimeError(
             "Solution verification remained needs_revision after "
-            f"{self.max_solution_revisions + 1} attempt(s): {report.summary}"
+            f"{self.max_solution_revisions + 1} attempt(s): "
+            f"{state['verification_report']['summary']}"
         )
 
     async def _plan(

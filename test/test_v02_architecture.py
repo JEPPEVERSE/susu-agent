@@ -145,7 +145,7 @@ class V02ArchitectureTests(unittest.TestCase):
             "problem_identification",
         )
 
-    def test_continuing_execution_requires_a_visible_open_question(self) -> None:
+    def test_initial_execution_rejects_feedback_instead_of_a_question(self) -> None:
         from susu_agent.teaching_runtime import validate_teaching_execution_against_state
         from test_teaching_state_update import make_runtime_state
 
@@ -154,11 +154,12 @@ class V02ArchitectureTests(unittest.TestCase):
                 assessment="not_applicable",
                 state_delta=ExecutionStateDelta(),
             )
-        with self.assertRaisesRegex(ValueError, "must ask exactly one question"):
+        with self.assertRaisesRegex(ValueError, "initial teaching turn"):
             validate_teaching_execution_against_state(make_runtime_state(), execution)
 
-    def test_student_response_is_rendered_from_one_question_source(self) -> None:
+    def test_initial_response_hides_executor_feedback_and_shows_only_question(self) -> None:
         from susu_agent.teaching_runtime import render_teaching_response
+        from test_teaching_state_update import make_runtime_state
 
         execution = TeachingExecution(
             feedback="请思考下一步。",
@@ -167,8 +168,8 @@ class V02ArchitectureTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            render_teaching_response(execution),
-            "请思考下一步。\n\n题目要求什么？",
+            render_teaching_response(execution, make_runtime_state()),
+            "题目要求什么？",
         )
 
     def test_state_rejects_an_orphan_progress_question(self) -> None:

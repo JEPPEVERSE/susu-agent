@@ -16,6 +16,7 @@ from susu_agent.schemas.v02 import (
 from susu_agent.teaching_runtime import (
     MAX_NODE_ATTEMPTS,
     apply_teaching_execution,
+    render_teaching_response,
     resolve_execution_decision,
     validate_teaching_execution_against_state as validate_v02_execution,
 )
@@ -97,8 +98,8 @@ class V02TeachingRuntimeTests(unittest.TestCase):
             TeachingExecution(
                 assessment="not_applicable",
                 state_delta=ExecutionStateDelta(
-                    open_question="目标和范围是什么？",
-                    open_question_target_checkpoint_indices=[0, 1],
+                    open_question="目标是什么？",
+                    open_question_target_checkpoint_indices=[0],
                 ),
             ),
         )
@@ -153,16 +154,91 @@ class V02TeachingRuntimeTests(unittest.TestCase):
         )
         decision = validate_v02_execution(state, execution)
         self.assertTrue(decision.forced_advance)
+        self.assertTrue(decision.reveal_current_answer)
         self.assertEqual(decision.target_node_id, "teach_1")
+
+    def test_second_answer_reveals_answer_explanation_and_next_question(self) -> None:
+        for second_assessment in ("incorrect", "correct"):
+            with self.subTest(second_assessment=second_assessment):
+                state = apply_teaching_execution(
+                    make_runtime_state(),
+                    TeachingExecution(
+                        assessment="not_applicable",
+                        state_delta=ExecutionStateDelta(
+                            open_question="目标是什么？",
+                            open_question_target_checkpoint_indices=[0],
+                        ),
+                    ),
+                )
+                state = apply_teaching_execution(
+                    state,
+                    TeachingExecution(
+                        feedback="再想想范围。",
+                        assessment="partially_correct",
+                        state_delta=ExecutionStateDelta(
+                            answered_open_question_summary="学生只答出了目标。",
+                            answered_open_question_feedback="尚未说明范围。",
+                            satisfied_checkpoint_indices_to_add=[0],
+                            open_question="范围是什么？",
+                            open_question_target_checkpoint_indices=[1],
+                        ),
+                    ),
+                )
+                second_execution = TeachingExecution(
+                    feedback="这是你的第二轮回答。",
+                    assessment=second_assessment,
+                    state_delta=ExecutionStateDelta(
+                        answered_open_question_summary="学生第二轮回答范围。",
+                        answered_open_question_feedback="第二轮回答已完成判定。",
+                        open_question="下一步关系是什么？",
+                        open_question_target_checkpoint_indices=[0],
+                    ),
+                )
+
+                decision = resolve_execution_decision(state, second_execution)
+                response = render_teaching_response(second_execution, state)
+
+                self.assertTrue(decision.reveal_current_answer)
+                self.assertEqual(decision.target_node_id, "teach_1")
+                self.assertIn("当前问题的正确答案：范围", response)
+                self.assertIn("这一步的目的：识别条件", response)
+                self.assertIn("背后原理：识别目标与范围。", response)
+                self.assertTrue(response.endswith("下一步关系是什么？"))
+                updated_state = apply_teaching_execution(state, second_execution)
+                self.assertEqual(
+                    updated_state["teaching_progress"]["current_strategy_node_id"],
+                    "teach_1",
+                )
+                self.assertEqual(
+                    updated_state["open_question_history"][-1]["question"],
+                    "下一步关系是什么？",
+                )
+                self.assertEqual(
+                    updated_state["open_question_history"][-1]["status"],
+                    "open",
+                )
 
     def test_invalid_checkpoint_target_is_rejected(self) -> None:
         execution = TeachingExecution(
-            feedback="继续。", assessment="not_applicable",
+            feedback="", assessment="not_applicable",
             state_delta=ExecutionStateDelta(
                 open_question="继续。", open_question_target_checkpoint_indices=[99]
             ),
         )
         with self.assertRaisesRegex(ValueError, "checkpoint targets"):
+            validate_v02_execution(make_runtime_state(), execution)
+
+    def test_initial_question_must_target_one_atomic_checkpoint(self) -> None:
+        execution = TeachingExecution(
+            feedback="",
+            assessment="not_applicable",
+            state_delta=ExecutionStateDelta(
+                open_question="请依次识别目标和范围。",
+                open_question_target_checkpoint_indices=[0, 1],
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "one atomic checkpoint"):
             validate_v02_execution(make_runtime_state(), execution)
 
 

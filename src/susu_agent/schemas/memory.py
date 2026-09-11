@@ -108,6 +108,17 @@ class MisconceptionCard(StrictModel):
     retrieval_text: str = Field(min_length=1, max_length=10_000)
 
 
+class SolutionPattern(StrictModel):
+    solution_pattern_id: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=500)
+    problem_signature: str = Field(min_length=1, max_length=2_000)
+    strategy: str = Field(min_length=1, max_length=6_000)
+    preconditions: list[str] = Field(default_factory=list, max_length=30)
+    verification_checks: list[str] = Field(default_factory=list, max_length=30)
+    applicability: CardApplicability = Field(default_factory=CardApplicability)
+    retrieval_text: str = Field(min_length=1, max_length=10_000)
+
+
 class MemoryCardCatalog(StrictModel):
     schema_version: Literal[1] = 1
     subject: str = Field(pattern=r"^[a-z][a-z0-9_-]*$", max_length=100)
@@ -116,11 +127,13 @@ class MemoryCardCatalog(StrictModel):
     misconception_cards: list[MisconceptionCard] = Field(
         default_factory=list, max_length=500
     )
+    solution_patterns: list[SolutionPattern] = Field(default_factory=list, max_length=500)
 
     @model_validator(mode="after")
     def unique_card_ids(self) -> Self:
         ids = [card.question_card_id for card in self.question_cards]
         ids.extend(card.misconception_card_id for card in self.misconception_cards)
+        ids.extend(pattern.solution_pattern_id for pattern in self.solution_patterns)
         if len(ids) != len(set(ids)):
             raise ValueError("Memory Card ids must be unique across a catalog")
         return self
@@ -193,6 +206,12 @@ class MemoryItem(StrictModel):
                 raise ValueError("Misconception Card id must equal memory_id")
             if card.retrieval_text != self.retrieval_text:
                 raise ValueError("Misconception Card retrieval_text must equal memory projection")
+        elif self.memory_type == MemoryType.SOLUTION_PATTERN:
+            pattern = SolutionPattern.model_validate(self.metadata.get("pattern"))
+            if pattern.solution_pattern_id != self.memory_id:
+                raise ValueError("Solution Pattern id must equal memory_id")
+            if pattern.retrieval_text != self.retrieval_text:
+                raise ValueError("Solution Pattern retrieval_text must equal memory projection")
         return self
 
 

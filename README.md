@@ -4,7 +4,7 @@ susuAgent 是一个面向个性化数学教学实验的多 Agent 原型。v0.3 �
 
 v0.3 不试图机械复制人脑。它只借鉴长期记忆、工作记忆、认知控制和元认知审核等功能分工，同时利用机器外部记忆容量大、可检索、可复现、可审计和可回滚的优势。
 
-> **实现状态**：v0.3 主路径已经实现。五层 Agent、ProblemRepresentation、分类型记忆、词法与本地可重建向量混合检索、Question/Misconception Card 路由、渐进扩域、SQLite 权威记录、审核门控提案、版本与回滚均已接入。`MEMORY_ENABLED=false` 时仍保持 v0.2 的模型调用和输出兼容；生产环境可将本地哈希向量器替换为外部 Embedding/Reranker，而不改变权威记录。
+> **实现状态**：v0.3 主路径已经实现。五层 Agent、ProblemRepresentation、分类型记忆、词法与本地可重建向量混合检索、Solution Pattern、Question/Misconception Card 路由、渐进扩域、SQLite 权威记录、审核门控提案、版本与回滚均已接入。`MEMORY_ENABLED=false` 时仍保持 v0.2 的模型调用和输出兼容；生产环境可将本地哈希向量器替换为外部 Embedding/Reranker，而不改变权威记录。
 
 ## 一、设计目标
 
@@ -789,7 +789,7 @@ src/susu_agent/
 
 - 当前仅注册数学教案，尚未实现通用自动学科分类；
 - 教案补丁 RAG 仍保留为独立词法来源；统一记忆层另提供词法与可替换向量器的混合检索；
-- Question Card 和 Misconception Card 已有独立契约与 Collection；旧 Solution 内的问题字段仍作为迁移兼容回退；
+- Solution Pattern、Question Card 和 Misconception Card 已有独立契约与 Collection；旧 Solution 内的问题字段仍作为迁移兼容回退；
 - 默认向量器为离线、确定性的哈希向量器，生产语义 Embedding 和学习型 Reranker 需要按部署环境接入；
 - Verifier 能降低错误率，但不能形式化保证所有数学结论正确；
 - 模拟学生可以用于开发，不能单独证明真实教学效果；

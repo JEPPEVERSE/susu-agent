@@ -228,6 +228,26 @@ class V03MemoryTests(unittest.TestCase):
             "misconception_direct_derivative_multivariable",
             self.repository.indexed_ids(),
         )
+        self.assertIn(
+            "solution_pattern_trigonometric_tangent_normalization",
+            self.repository.indexed_ids(),
+        )
+
+        solution_query = RetrievalQuery(
+            subject="math",
+            task_stage="solve",
+            target_agent="solution_agent",
+            query_text="锐角三角约束求余弦最大值，用和角公式统一成正切关系",
+            memory_types=[MemoryType.SOLUTION_PATTERN],
+            goal_type="extremum",
+            problem_type="trigonometry",
+        )
+        evidence = self.router.retrieve(solution_query)
+        self.assertEqual(
+            evidence[0].memory_id,
+            "solution_pattern_trigonometric_tangent_normalization",
+        )
+        self.assertIn("strategy", evidence[0].structured_content)
 
     def test_unreviewed_proposal_is_not_indexed_and_approved_proposal_is(self) -> None:
         gate = MemoryWriteGate(self.repository)

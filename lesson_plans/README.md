@@ -20,7 +20,7 @@ lesson_plans/
 - `lesson_plan.json`：唯一清单，声明版本、文件、稳定步骤 ID 及上下文标题映射。
 - `instruction.md`：短而稳定的执行规则，规定 v0.3 五层 Agent、代码状态机与记忆引用必须怎样行动。
 - `context.md`：完整理论、方法边界、路线说明和教学参考；运行时只按标题选择当前步骤需要的章节。
-- `memory_cards.json`：人工维护的 Question Card 与 Misconception Card；每张 Card 必须声明稳定 ID、适用条件、检索文本和教学检查点。
+- `memory_cards.json`：人工维护的 Solution Pattern、Question Card 与 Misconception Card；每项记忆必须声明稳定 ID、适用条件和检索文本，教学 Card 还需声明检查点。
 - `patches/instruction/`：可选的执行规则补丁目录；既可由清单常驻加载，也可作为 RAG 候选。
 - `patches/context/`：可选的专题理论补丁目录；既可由清单常驻加载，也可作为 RAG 候选。
 

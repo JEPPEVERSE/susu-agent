@@ -207,6 +207,9 @@ def build_teaching_executor_input(
                 "max_node_attempts": MAX_NODE_ATTEMPTS,
                 "current_hint_index": hint_index,
                 "satisfied_checkpoint_indices": satisfied_checkpoint_indices,
+                "reveal_current_answer_after_this_response": (
+                    attempts >= MAX_NODE_ATTEMPTS - 1
+                ),
                 "force_advance_after_this_answer_if_not_complete": (
                     attempts >= MAX_NODE_ATTEMPTS - 1
                 ),
